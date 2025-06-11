@@ -1,0 +1,398 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+
+@theme {
+    --font-sans: 'Nunito', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+/* Pre-render styles to prevent flash of content */
+html.no-transition * {
+    transition: none !important;
+    animation: none !important;
+}
+
+html.sidebar-collapsed #sidebar {
+    width: 60px !important;
+    min-width: 60px !important;
+}
+
+html.sidebar-collapsed #content {
+    width: calc(100% - 60px) !important;
+    margin-left: 60px !important;
+}
+
+html.sidebar-mobile #sidebar {
+    margin-left: -250px !important;
+}
+
+html.sidebar-mobile #content {
+    width: 100% !important;
+    margin-left: 0 !important;
+}
+
+/* Custom Styles */
+.navbar-brand {
+    font-weight: bold;
+    color: #4A6FDC !important;
+}
+
+.card {
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.card-header.bg-primary {
+    background-color: #4A6FDC !important;
+}
+
+.avatar-placeholder {
+    width: 100px;
+    height: 100px;
+    background-color: #e9ecef;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+}
+
+/* Reset some Tailwind styles that might interfere with our layout */
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/* Sidebar Styles */
+body {
+    font-family: 'Poppins', sans-serif;
+    background-color: #f8f9fa;
+    overflow-x: hidden;
+    display: block !important; /* Override any flexbox settings from Tailwind */
+}
+
+.wrapper {
+    display: flex;
+    width: 100%;
+    min-height: 100vh;
+    position: relative;
+}
+
+/* Sidebar */
+#sidebar {
+    width: 250px;
+    min-width: 250px;
+    height: 100vh;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1050; /* Increased to ensure it's above other elements */
+    background: #343a40;
+    color: #ced4da;
+    transition: all 0.3s ease;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+}
+
+#sidebar.active {
+    margin-left: -250px;
+}
+
+#sidebar.collapsed {
+    width: 60px;
+    min-width: 60px;
+}
+
+/* User Info Styles */
+.sidebar-user-info {
+    background-color: #212529;
+}
+
+.user-info-container {
+    transition: all 0.3s ease;
+}
+
+#sidebar.collapsed .user-info-container {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.user-avatar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.3s ease;
+}
+
+.user-details {
+    transition: all 0.3s ease;
+}
+
+#sidebar.collapsed .user-details {
+    display: none;
+    opacity: 0;
+    visibility: hidden;
+    width: 0;
+    height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+/* Text transition effects */
+#sidebar .sidebar-header h3,
+#sidebar .sidebar-user-info div > p,
+#sidebar .sidebar-user-info div > small,
+#sidebar .sidebar-footer p,
+#sidebar ul li a span,
+#sidebar ul li.sidebar-header {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.2s ease 0.2s, visibility 0s linear 0s;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+#sidebar.collapsed .sidebar-header h3,
+#sidebar.collapsed .sidebar-user-info div > p,
+#sidebar.collapsed .sidebar-user-info div > small,
+#sidebar.collapsed .sidebar-footer p {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.1s ease, visibility 0s linear 0.1s;
+    width: 0;
+    height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+#sidebar.collapsed .sidebar-header {
+    justify-content: center;
+    padding: 0.5rem;
+}
+
+#sidebar.collapsed ul li a span {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.1s ease, visibility 0s linear 0.1s;
+    width: 0;
+    margin: 0;
+    padding: 0;
+}
+
+#sidebar.collapsed ul li.sidebar-header {
+    opacity: 0;
+    visibility: hidden;
+    height: 0;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    border: none;
+    transition: opacity 0.1s ease, visibility 0s linear 0.1s, height 0.1s ease, padding 0.1s ease, margin 0.1s ease;
+}
+
+#sidebar.collapsed ul li a {
+    padding: 15px;
+    text-align: center;
+    display: flex;
+    justify-content: center;
+}
+
+#sidebar.collapsed ul li a i {
+    margin-right: 0;
+    font-size: 1.2rem;
+    transition: margin 0.3s ease, font-size 0.3s ease;
+}
+
+#sidebar ul li a i {
+    margin-right: 10px;
+    width: 20px;
+    text-align: center;
+    transition: margin 0.3s ease, font-size 0.3s ease;
+}
+
+#sidebar.collapsed .sidebar-user-info {
+    padding: 10px 0;
+    display: flex;
+    justify-content: center;
+}
+
+#sidebar .sidebar-header {
+    padding: 1rem;
+    background: #212529;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#sidebar .sidebar-header h3 {
+    margin: 0;
+    font-size: 1.4rem;
+    color: #ffffff;
+}
+
+#sidebar ul.components {
+    padding: 1rem 0;
+    flex-grow: 1;
+    margin: 0;
+    list-style: none;
+}
+
+#sidebar ul li {
+    padding: 0;
+    margin: 0;
+}
+
+#sidebar ul li.sidebar-header {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+    color: #adb5bd;
+    border-bottom: 1px solid #495057;
+    margin-top: 1rem;
+    transition: opacity 0.2s ease, visibility 0s, height 0.2s ease, padding 0.2s ease, margin 0.2s ease;
+}
+
+#sidebar ul li a {
+    padding: 0.8rem 1.5rem;
+    font-size: 0.95rem;
+    display: block;
+    color: #ced4da;
+    text-decoration: none;
+    transition: all 0.3s;
+}
+
+#sidebar ul li a:hover {
+    background: #495057;
+    color: #fff;
+}
+
+#sidebar ul li.active > a {
+    background: #495057;
+    color: #fff;
+    border-left: 4px solid #0d6efd;
+}
+
+#sidebar ul li a.highlight-menu {
+    background-color: rgba(255, 193, 7, 0.15);
+    border-left: 4px solid #ffc107;
+}
+
+.sidebar-footer {
+    padding: 1rem;
+    text-align: center;
+    background: #212529;
+    font-size: 0.8rem;
+}
+
+/* Content */
+#content {
+    width: calc(100% - 250px);
+    margin-left: 250px;
+    min-height: 100vh;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+#content.active {
+    width: 100%;
+    margin-left: 0;
+}
+
+#content.collapsed {
+    width: calc(100% - 60px);
+    margin-left: 60px;
+}
+
+/* Navbar */
+.navbar-container {
+    position: sticky;
+    top: 0;
+    z-index: 990;
+    width: 100%;
+}
+
+.content-area {
+    flex-grow: 1;
+    padding-bottom: 2rem;
+}
+
+/* Make hamburger button more visible */
+#sidebarCollapse {
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+#sidebarCollapse:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+#sidebarCollapse:active {
+    transform: scale(0.95);
+}
+
+/* Small devices */
+@media (max-width: 768px) {
+    #sidebar {
+        margin-left: -250px;
+    }
+    
+    #sidebar.active {
+        margin-left: 0;
+    }
+    
+    #content {
+        width: 100%;
+        margin-left: 0;
+    }
+    
+    #content.active {
+        width: calc(100% - 250px);
+        margin-left: 250px;
+    }
+    
+    #sidebar.collapsed {
+        margin-left: -60px;
+    }
+    
+    #sidebar.collapsed.active {
+        margin-left: 0;
+    }
+}
+
+main {
+    min-height: calc(100vh - 100px);
+}
+
+/* Make sure the page layout doesn't break our sidebar positioning */
+.min-h-screen {
+    min-height: 100vh;
+    position: relative;
+}
+
+/* Override any conflicting Tailwind styles */
+.fixed {
+    position: fixed !important;
+}
+
+.relative {
+    position: relative !important;
+}
+
+/* Override any Tailwind flex settings that might break our layout */
+.flex-col {
+    flex-direction: column !important;
+}
