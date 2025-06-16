@@ -7,6 +7,11 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ config('app.name', 'Lab Bahasa AI') }}</title>
     
+    @php
+      // Ensure $selectedLanguage is always defined
+      $selectedLanguage = session('language', 'id');
+    @endphp
+    
     <!-- Prevent sidebar flash with inline script -->
     <script>
       (function() {
@@ -100,7 +105,6 @@
               <div class="user-details ms-3">
                 <p class="mb-0 fw-bold text-primary">{{ auth()->check() ? auth()->user()->name : 'Guest' }}</p>
                 @php
-                  $selectedLanguage = session('language', 'id');
                   $currentLevel = auth()->check() ? auth()->user()->getCurrentLevel($selectedLanguage) : 1;
                   $hasCompletedPretest = auth()->check() ? auth()->user()->hasCompletedPretest($selectedLanguage) : false;
                   $levelNames = [
@@ -305,9 +309,8 @@
                         <span>Teacher</span>
                         @else
                         @php
-                          $selectedLang = session('language', 'id');
-                          $hasCompletedPretestNav = auth()->check() ? auth()->user()->hasCompletedPretest($selectedLang) : false;
-                          $currentLevelNav = auth()->check() ? auth()->user()->getCurrentLevel($selectedLang) : 1;
+                          $hasCompletedPretestNav = auth()->check() ? auth()->user()->hasCompletedPretest($selectedLanguage) : false;
+                          $currentLevelNav = auth()->check() ? auth()->user()->getCurrentLevel($selectedLanguage) : 1;
                           $levelNames = [
                             1 => 'Beginner',
                             2 => 'Intermediate',

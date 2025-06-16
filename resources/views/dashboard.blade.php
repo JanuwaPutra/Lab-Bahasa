@@ -112,6 +112,9 @@
             <a href="{{ route('learning.materials') }}" class="btn btn-primary btn-lg px-4">
               Materi Pembelajaran
             </a>
+            <a href="{{ route('quiz.history.index') }}" class="btn btn-info btn-lg px-4">
+              Riwayat Kuis
+            </a>
             <a href="{{ route('post-test.language', ['language' => $selectedLanguage]) }}" class="btn btn-success btn-lg px-4">
               Ambil Post-Test
             </a>

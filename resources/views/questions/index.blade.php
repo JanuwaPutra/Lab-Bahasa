@@ -4,9 +4,22 @@
       <div class="col-md-12">
         <div class="d-flex justify-content-between align-items-center">
           <h1>Manajemen Soal</h1>
-          <a href="{{ route('questions.create') }}" class="btn btn-primary">
-            <i class="fas fa-plus-circle me-2"></i> Tambah Soal Baru
-          </a>
+          <div>
+            <a href="{{ route('questions.create') }}" class="btn btn-primary me-2">
+              <i class="fas fa-plus-circle me-2"></i> Tambah Soal Baru
+            </a>
+            <div class="btn-group">
+              <button type="button" class="btn btn-success dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-file-csv me-1"></i> Import/Export
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="{{ route('questions.import.form') }}"><i class="fas fa-file-upload me-2"></i> Import Soal</a></li>
+                <li><a class="dropdown-item" href="{{ route('questions.template.download') }}"><i class="fas fa-download me-2"></i> Download Template CSV</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="{{ route('questions.export', ['type' => $type, 'language' => $language ?? 'id']) }}"><i class="fas fa-file-export me-2"></i> Export Soal CSV</a></li>
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
     </div>

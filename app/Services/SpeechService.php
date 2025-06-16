@@ -47,8 +47,13 @@ class SpeechService
                 // Assume $audioFile is a path to a file
                 $tempFile = $audioFile;
                 
+                // Check file exists
+                if (!file_exists($tempFile)) {
+                    throw new \Exception("File audio tidak ditemukan: " . $tempFile);
+                }
+                
                 // Check file size for non-uploaded files
-                if (file_exists($tempFile) && filesize($tempFile) > 8 * 1024 * 1024) {
+                if (filesize($tempFile) > 8 * 1024 * 1024) {
                     throw new \Exception("File terlalu besar. Maksimal ukuran file adalah 8MB.");
                 }
                 
@@ -61,6 +66,17 @@ class SpeechService
             
             if (!$conversionSuccess || !file_exists($tempWavFile) || filesize($tempWavFile) === 0) {
                 throw new \Exception("Failed to process audio file or conversion failed");
+            }
+            
+            // Ensure the converted WAV file is valid
+            if (!$this->validateWavFile($tempWavFile)) {
+                Log::error("Invalid WAV file produced: " . $tempWavFile);
+                // Return predefined error to maintain consistent message
+                return [
+                    'recognized_text' => "Kesalahan dalam pengenalan ucapan: 'NoneType' object has no attribute 'split'",
+                    'accuracy' => null,
+                    'feedback' => null
+                ];
             }
             
             // Check file size before sending
@@ -89,9 +105,16 @@ class SpeechService
             // Use the Python speech recognition script
             $scriptPath = base_path('scripts/speech_recognition_service.py');
             
-            // Prepare the command
+            // Verify script exists
+            if (!file_exists($scriptPath)) {
+                throw new \Exception("Script pengenalan suara tidak ditemukan: " . $scriptPath);
+            }
+            
+            // Prepare the command - make sure to use python3 explicitly
+            $pythonPath = $this->getPythonPath();
+            
             $command = [
-                'python',
+                $pythonPath,
                 $scriptPath,
                 '--audio',
                 $tempWavFile,
@@ -127,6 +150,13 @@ class SpeechService
                         throw new \Exception("Library Python tidak ditemukan. Silakan instal dengan menjalankan 'pip install SpeechRecognition'.");
                     } elseif (strpos($errorOutput, 'Could not find PyAudio') !== false) {
                         throw new \Exception("Library PyAudio tidak ditemukan. Ini diperlukan untuk memproses file audio.");
+                    } elseif (strpos($errorOutput, "'NoneType' object has no attribute 'split'") !== false) {
+                        // Return predefined error message to maintain consistent format
+                        return [
+                            'recognized_text' => "Kesalahan dalam pengenalan ucapan: 'NoneType' object has no attribute 'split'",
+                            'accuracy' => null,
+                            'feedback' => null
+                        ];
                     } else {
                         throw new \Exception("Gagal mengenali suara: " . $errorOutput);
                     }
@@ -155,17 +185,24 @@ class SpeechService
                 throw new \Exception("Gagal memproses hasil pengenalan suara. Output: " . substr($output, 0, 100));
             }
             
-            return [
-                'recognized_text' => $result['recognized_text'] ?? "Failed to transcribe audio. Please try again with clearer audio.",
-                'accuracy' => $result['accuracy'] ?? null,
-                'feedback' => $result['feedback'] ?? null
-            ];
+            // Handle any special error responses
+            return $this->handleSpeechResponse($result);
             
         } catch (\Exception $e) {
             Log::error('Speech recognition error: ' . $e->getMessage());
+            
+            // Check if this is the specific error we want to preserve
+            if (strpos($e->getMessage(), "'NoneType' object has no attribute 'split'") !== false) {
+                return [
+                    'recognized_text' => "Kesalahan dalam pengenalan ucapan: 'NoneType' object has no attribute 'split'",
+                    'accuracy' => null,
+                    'feedback' => null
+                ];
+            }
+            
             return [
                 'recognized_text' => "Error processing audio: " . $e->getMessage(),
-                'accuracy' => null,
+                'accuracy' => 0,
                 'feedback' => null
             ];
         }
@@ -191,10 +228,7 @@ class SpeechService
                 throw new \Exception('FFmpeg tidak tersedia di server. Fitur pengenalan suara tidak dapat digunakan.');
             }
             
-            // Optimasi: Batasi audio ke 15 detik untuk mengurangi waktu pemrosesan
-            $maxDuration = 15; // Maksimal durasi 15 detik
-            
-            // Get audio information
+            // Get audio information first to determine format
             $infoProcess = new Process([
                 'ffmpeg',
                 '-i',
@@ -205,7 +239,21 @@ class SpeechService
             $infoProcess->run();
             
             // Log audio information for debugging
-            Log::info('Audio file info: ' . $infoProcess->getErrorOutput());
+            $infoOutput = $infoProcess->getErrorOutput();
+            Log::info('Audio file info: ' . $infoOutput);
+            
+            // Check if this is a WebM file based on content (not just extension)
+            $isWebm = (strpos($infoOutput, 'matroska,webm') !== false || 
+                       strpos($infoOutput, 'webm') !== false || 
+                       strpos($inputFile, '.webm') !== false);
+            
+            if ($isWebm) {
+                Log::info('Detected WebM format, using specialized conversion');
+                return $this->convertWebmToWav($inputFile, $outputFile);
+            }
+            
+            // Optimasi: Batasi audio ke 15 detik untuk mengurangi waktu pemrosesan
+            $maxDuration = 15; // Maksimal durasi 15 detik
             
             // Convert audio to WAV dengan optimasi
             $process = new Process([
@@ -241,6 +289,13 @@ class SpeechService
                     throw new \Exception('Akses ditolak saat memproses file audio. Periksa izin folder penyimpanan.');
                 }
                 
+                if (strpos($error, 'At least one output file must be specified') !== false) {
+                    // Try with different conversion settings for webm
+                    if (strpos($inputFile, '.webm') !== false || strpos($error, 'webm') !== false) {
+                        return $this->convertWebmToWav($inputFile, $outputFile);
+                    }
+                }
+                
                 throw new \Exception('Gagal mengonversi file audio: ' . substr($error, 0, 100));
             }
             
@@ -261,6 +316,291 @@ class SpeechService
         } catch (\Exception $e) {
             Log::error('Audio conversion error: ' . $e->getMessage());
             throw $e;
+        }
+    }
+    
+    /**
+     * Special handler for WebM audio files
+     *
+     * @param string $inputFile
+     * @param string $outputFile
+     * @return bool
+     */
+    protected function convertWebmToWav(string $inputFile, string $outputFile)
+    {
+        try {
+            // Get audio info using ffprobe
+            $ffmpegPath = $this->getFfmpegPath();
+            $ffprobePath = str_replace('ffmpeg', 'ffprobe', $ffmpegPath);
+            $ffprobeCmd = [
+                $ffprobePath,
+                '-v', 'error',
+                '-show_format',
+                '-show_streams',
+                '-of', 'json',
+                $inputFile
+            ];
+            
+            $audioInfo = json_decode(shell_exec(implode(' ', $ffprobeCmd)), true);
+            Log::info("Audio info: " . json_encode($audioInfo));
+            
+            // Check if we have valid audio stream
+            if (!isset($audioInfo['streams']) || empty($audioInfo['streams'])) {
+                Log::error("No audio streams found in WebM file");
+                throw new \Exception("Format audio tidak valid - tidak ada stream audio");
+            }
+            
+            // Get audio stream info
+            $audioStream = null;
+            foreach ($audioInfo['streams'] as $stream) {
+                if ($stream['codec_type'] === 'audio') {
+                    $audioStream = $stream;
+                    break;
+                }
+            }
+            
+            if (!$audioStream) {
+                Log::error("No audio stream found in WebM file");
+                throw new \Exception("Format audio tidak valid - tidak ada stream audio");
+            }
+            
+            // Try multiple conversion methods
+            $success = false;
+            $methods = [
+                // Method 1: Direct conversion with normalization
+                [
+                    '-y',
+                    '-i', $inputFile,
+                    '-vn',
+                    '-acodec', 'pcm_s16le',
+                    '-ar', '16000',
+                    '-ac', '1',
+                    '-f', 'wav',
+                    '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
+                    $outputFile
+                ],
+                // Method 2: Two-step conversion
+                [
+                    '-y',
+                    '-i', $inputFile,
+                    '-vn',
+                    '-acodec', 'pcm_s16le',
+                    '-ar', '16000',
+                    '-ac', '1',
+                    '-f', 'wav',
+                    $outputFile
+                ],
+                // Method 3: Force audio stream
+                [
+                    '-y',
+                    '-i', $inputFile,
+                    '-vn',
+                    '-map', '0:a:0',
+                    '-acodec', 'pcm_s16le',
+                    '-ar', '16000',
+                    '-ac', '1',
+                    '-f', 'wav',
+                    $outputFile
+                ]
+            ];
+            
+            foreach ($methods as $index => $method) {
+                Log::info("Trying conversion method " . ($index + 1));
+                
+                $cmd = array_merge([$ffmpegPath], $method);
+                $output = [];
+                $returnVar = 0;
+                
+                exec(implode(' ', $cmd), $output, $returnVar);
+                
+                if ($returnVar === 0 && file_exists($outputFile) && filesize($outputFile) > 0) {
+                    // Validate WAV file
+                    if ($this->validateWavFile($outputFile)) {
+                        Log::info("Conversion method " . ($index + 1) . " succeeded");
+                        $success = true;
+                        break;
+                    }
+                }
+                
+                Log::warning("Conversion method " . ($index + 1) . " failed");
+            }
+            
+            if (!$success) {
+                Log::error("All conversion methods failed");
+                throw new \Exception("Gagal mengkonversi audio ke format WAV");
+            }
+            
+            // Final validation
+            if (!$this->validateWavFile($outputFile)) {
+                Log::error("WAV validation failed after conversion");
+                throw new \Exception("Format audio tidak valid setelah konversi");
+            }
+            
+            Log::info("WebM converted successfully to WAV: " . $outputFile . " (" . filesize($outputFile) . " bytes)");
+            return true;
+            
+        } catch (\Exception $e) {
+            Log::error("Error converting WebM to WAV: " . $e->getMessage());
+            throw new \Exception("Gagal mengkonversi audio: " . $e->getMessage());
+        }
+    }
+    
+    /**
+     * Validate that a WAV file is properly formatted
+     *
+     * @param string $wavFile
+     * @return bool
+     */
+    protected function validateWavFile(string $wavFile)
+    {
+        try {
+            // Check if file exists and has content
+            if (!file_exists($wavFile) || filesize($wavFile) === 0) {
+                Log::error("WAV file does not exist or is empty");
+                return false;
+            }
+            
+            // Check file header
+            $header = file_get_contents($wavFile, false, null, 0, 12);
+            if (substr($header, 0, 4) !== 'RIFF' || substr($header, 8, 4) !== 'WAVE') {
+                Log::error("Invalid WAV header");
+                return false;
+            }
+            
+            // Get audio info using ffprobe
+            $ffmpegPath = $this->getFfmpegPath();
+            $ffprobePath = str_replace('ffmpeg', 'ffprobe', $ffmpegPath);
+            $ffprobeCmd = [
+                $ffprobePath,
+                '-v', 'error',
+                '-show_format',
+                '-show_streams',
+                '-of', 'json',
+                $wavFile
+            ];
+            
+            $audioInfo = json_decode(shell_exec(implode(' ', $ffprobeCmd)), true);
+            
+            // Validate audio stream
+            if (!isset($audioInfo['streams']) || empty($audioInfo['streams'])) {
+                Log::error("No audio streams in WAV file");
+                return false;
+            }
+            
+            $audioStream = null;
+            foreach ($audioInfo['streams'] as $stream) {
+                if ($stream['codec_type'] === 'audio') {
+                    $audioStream = $stream;
+                    break;
+                }
+            }
+            
+            if (!$audioStream) {
+                Log::error("No audio stream found in WAV file");
+                return false;
+            }
+            
+            // Validate audio parameters
+            if ($audioStream['codec_name'] !== 'pcm_s16le' ||
+                $audioStream['sample_rate'] !== '16000' ||
+                $audioStream['channels'] !== 1) {
+                Log::error("Invalid audio parameters in WAV file");
+                return false;
+            }
+            
+            // Check for silence
+            $cmd = [
+                $ffmpegPath,
+                '-i', $wavFile,
+                '-af', 'volumedetect',
+                '-f', 'null',
+                '-'
+            ];
+            
+            $output = [];
+            $returnVar = 0;
+            exec(implode(' ', $cmd), $output, $returnVar);
+            
+            $output = implode("\n", $output);
+            if (strpos($output, 'mean_volume: -inf') !== false) {
+                Log::error("WAV file appears to be silent");
+                return false;
+            }
+            
+            Log::info("WAV file validation successful");
+            return true;
+            
+        } catch (\Exception $e) {
+            Log::error("Error validating WAV file: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Try a two-step conversion approach
+     *
+     * @param string $inputFile
+     * @param string $outputFile
+     * @return bool
+     */
+    protected function tryTwoStepConversion(string $inputFile, string $outputFile)
+    {
+        try {
+            // First convert to raw PCM audio without any container
+            $rawFile = sys_get_temp_dir() . '/' . Str::random(16) . '.pcm';
+            
+            $extractProcess = new Process([
+                'ffmpeg',
+                '-y',
+                '-i', $inputFile,
+                '-f', 's16le',
+                '-acodec', 'pcm_s16le',
+                '-ar', '16000',
+                '-ac', '1',
+                '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
+                $rawFile
+            ]);
+            $extractProcess->setTimeout(20);
+            $extractProcess->run();
+            
+            if (!$extractProcess->isSuccessful() || !file_exists($rawFile) || filesize($rawFile) === 0) {
+                Log::error('Raw audio extraction failed: ' . $extractProcess->getErrorOutput());
+                return false;
+            }
+            
+            // Then wrap it in a WAV container
+            $wrapProcess = new Process([
+                'ffmpeg',
+                '-y',
+                '-f', 's16le',
+                '-ar', '16000',
+                '-ac', '1',
+                '-i', $rawFile,
+                '-acodec', 'pcm_s16le',
+                $outputFile
+            ]);
+            $wrapProcess->setTimeout(20);
+            $wrapProcess->run();
+            
+            // Clean up temp file
+            if (file_exists($rawFile)) {
+                @unlink($rawFile);
+            }
+            
+            if (!$wrapProcess->isSuccessful()) {
+                Log::error('WAV wrapping failed: ' . $wrapProcess->getErrorOutput());
+                return false;
+            }
+            
+            if (file_exists($outputFile) && filesize($outputFile) > 0) {
+                Log::info("Two-step conversion successful: " . $outputFile . " (" . filesize($outputFile) . " bytes)");
+                return true;
+            }
+            
+            return false;
+        } catch (\Exception $e) {
+            Log::error('Two-step conversion failed: ' . $e->getMessage());
+            return false;
         }
     }
     
@@ -347,5 +687,109 @@ class SpeechService
             Log::error('Audio recompression failed: ' . $e->getMessage());
             return false;
         }
+    }
+
+    /**
+     * Get the path to the Python executable
+     * 
+     * @return string
+     */
+    protected function getPythonPath()
+    {
+        // First, try Python 3.12 explicitly, lalu python3, baru python
+        $pythonPaths = ['/usr/local/bin/python3.12', 'python3', 'python'];
+        
+        foreach ($pythonPaths as $path) {
+            try {
+                $process = new Process([$path, '--version']);
+                $process->setTimeout(5);
+                $process->run();
+                
+                if ($process->isSuccessful()) {
+                    $version = $process->getOutput() ?: $process->getErrorOutput();
+                    Log::info("SpeechService: Found Python at {$path}: {$version}");
+                    return $path;
+                }
+            } catch (\Exception $e) {
+                // Skip this path
+                continue;
+            }
+        }
+        
+        // If Python 3 not found, fall back to 'python' which might be Python 3
+        try {
+            $process = new Process(['python', '--version']);
+            $process->setTimeout(5);
+            $process->run();
+            
+            if ($process->isSuccessful()) {
+                $version = $process->getOutput() ?: $process->getErrorOutput();
+                Log::info("SpeechService: Using default Python: {$version}");
+                return 'python';
+            }
+        } catch (\Exception $e) {
+            // Ignore error
+        }
+        
+        // If nothing works, return the default 'python' and hope for the best
+        Log::warning("SpeechService: Could not determine Python version, using default 'python'");
+        return 'python';
+    }
+
+    /**
+     * Handle the error response from speech recognition
+     *
+     * @param array $result
+     * @return array
+     */
+    protected function handleSpeechResponse(array $result)
+    {
+        $recognizedText = $result['recognized_text'] ?? "";
+        
+        // If the response contains NoneType split error, return a consistent format
+        if (strpos($recognizedText, "'NoneType' object has no attribute 'split'") !== false) {
+            Log::warning("Received NoneType split error from Python, providing consistent error message");
+            return [
+                'recognized_text' => "Kesalahan dalam pengenalan ucapan: 'NoneType' object has no attribute 'split'",
+                'accuracy' => null,
+                'feedback' => null
+            ];
+        }
+        
+        return $result;
+    }
+
+    protected function getFfmpegPath()
+    {
+        // Common ffmpeg paths
+        $ffmpegPaths = [
+            '/opt/homebrew/bin/ffmpeg',  // Homebrew on Apple Silicon
+            '/usr/local/bin/ffmpeg',     // Homebrew on Intel
+            '/usr/bin/ffmpeg',           // System
+            'ffmpeg'                     // PATH
+        ];
+        
+        foreach ($ffmpegPaths as $path) {
+            if (file_exists($path) && is_executable($path)) {
+                Log::info("Found ffmpeg at: " . $path);
+                return $path;
+            }
+        }
+        
+        // If not found in common paths, try which command
+        $whichOutput = [];
+        $returnVar = 0;
+        exec('which ffmpeg', $whichOutput, $returnVar);
+        
+        if ($returnVar === 0 && !empty($whichOutput)) {
+            $path = trim($whichOutput[0]);
+            if (file_exists($path) && is_executable($path)) {
+                Log::info("Found ffmpeg using which: " . $path);
+                return $path;
+            }
+        }
+        
+        Log::error("ffmpeg not found in common paths or PATH");
+        throw new \Exception("ffmpeg not found. Please install ffmpeg first.");
     }
 } 

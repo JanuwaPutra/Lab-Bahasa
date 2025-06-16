@@ -10,7 +10,7 @@
         </div>
         <p class="text-muted">
           <span class="badge bg-primary">Level {{ $material->level }}</span>
-          <span class="ms-2">{{ $material->duration }} menit</span>
+
         </p>
       </div>
     </div>
@@ -173,20 +173,32 @@
               @endif
             </ul>
             
+            @if($progress->quiz_attempts > 0)
+            <div class="mt-3">
+              <a href="{{ route('quiz.history.detail', $progress->id) }}" class="btn btn-sm btn-info">
+                <i class="fas fa-history me-1"></i> Lihat Riwayat Kuis Terakhir
+              </a>
+              <a href="{{ route('quiz.history.index') }}" class="btn btn-sm btn-outline-secondary">
+                <i class="fas fa-list me-1"></i> Semua Riwayat Kuis
+              </a>
+            </div>
+            @endif
+            
             @if($progress->quiz_passed)
-            <div class="alert alert-success mb-0">
+            <div class="alert alert-success mb-0 mt-3">
               <i class="fas fa-check-circle me-2"></i> Anda telah lulus kuis untuk materi ini.
             </div>
             @else
-            <div class="d-grid gap-2">
-              <a href="{{ route('learning.material.quiz.show', $material->id) }}" class="btn btn-warning">
+            <div class="d-grid gap-2 mt-3">
+              <a href="{{ route('learning.material.quiz.show', $material->id) }}?start_new=1" class="btn btn-warning">
                 <i class="fas fa-question-circle me-2"></i> 
-                @if($progress->quiz_attempts > 0)
-                  Lanjutkan Kuis
-                @else
                   Mulai Kuis
-                @endif
               </a>
+              @if($progress->quiz_attempts > 0 && $progress->quiz_end_time)
+              <a href="{{ route('learning.material.quiz.show', $material->id) }}?start_new=1&reset_timer=1" class="btn btn-outline-danger mt-2">
+                <i class="fas fa-redo me-2"></i> Mulai Ulang Timer
+              </a>
+              @endif
             </div>
             @endif
           </div>

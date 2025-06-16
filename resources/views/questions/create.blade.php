@@ -238,8 +238,8 @@
           
           // Show/hide points field based on question type
           if (selectedType === 'multiple_choice' || selectedType === 'true_false') {
-            // For multiple choice and true/false, show points but with a note
-            pointsContainer.style.display = 'block';
+            // Hide points field for multiple choice and true/false
+            pointsContainer.style.display = 'none';
           } else {
             // For essay and fill_blank, show points
             pointsContainer.style.display = 'block';

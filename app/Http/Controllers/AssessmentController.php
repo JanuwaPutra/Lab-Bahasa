@@ -216,6 +216,9 @@ class AssessmentController extends Controller
                         if ($isCorrect && $pointsEarned == 0) {
                             $pointsEarned = 1;
                         }
+                        
+                        // Ensure points are never negative
+                        $pointsEarned = max(0, $pointsEarned);
                     } else {
                         $pointsEarned = $isCorrect ? $question->points : 0;
                     }
@@ -254,6 +257,9 @@ class AssessmentController extends Controller
                         if ($isCorrect && $pointsEarned == 0) {
                             $pointsEarned = 1;
                         }
+                        
+                        // Ensure points are never negative
+                        $pointsEarned = max(0, $pointsEarned);
                     } else {
                         $pointsEarned = $isCorrect ? $question->points : 0;
                     }
@@ -334,6 +340,9 @@ class AssessmentController extends Controller
             
             // Clamp percentage to 0-100 range
             $percentage = max(0, min(100, $percentage));
+            
+            // Ensure score is never negative
+            $score = max(0, $score);
             
             // Determine level based on percentage
             $level = 1;
@@ -593,6 +602,9 @@ class AssessmentController extends Controller
                         if ($isCorrect && $pointsEarned == 0) {
                             $pointsEarned = 1;
                         }
+                        
+                        // Ensure points are never negative
+                        $pointsEarned = max(0, $pointsEarned);
                     } else {
                         $pointsEarned = $isCorrect ? $question->points : 0;
                     }
@@ -631,6 +643,9 @@ class AssessmentController extends Controller
                         if ($isCorrect && $pointsEarned == 0) {
                             $pointsEarned = 1;
                         }
+                        
+                        // Ensure points are never negative
+                        $pointsEarned = max(0, $pointsEarned);
                     } else {
                         $pointsEarned = $isCorrect ? $question->points : 0;
                     }
@@ -1143,5 +1158,292 @@ class AssessmentController extends Controller
             'questions' => $questions,
             'answers' => $answers
         ]);
+    }
+
+    /**
+     * Save pretest answers during the test
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function savePretestAnswers(Request $request)
+    {
+        $request->validate([
+            'answers' => 'required|array',
+            'language' => 'required|string|in:id,en,ru',
+        ]);
+
+        $answers = $request->input('answers');
+        $language = $request->input('language');
+        $forceClear = $request->input('force_clear', false);
+        
+        if (Auth::check()) {
+            $user = Auth::user();
+            
+            // Save to session - only set start_time if not force_clear and no existing time
+            $sessionStartTimeKey = 'pretest_start_time_' . $language;
+            $sessionAnswersKey = 'pretest_answers_' . $language;
+            
+            if ($forceClear) {
+                // Just clear answers without affecting time if this is a force clear
+                session([$sessionAnswersKey => []]);
+                Log::info('Pretest answers cleared (force)', [
+                    'user_id' => $user->id,
+                    'language' => $language
+                ]);
+            } else {
+                // Normal save operation
+                session([
+                    $sessionAnswersKey => $answers,
+                    $sessionStartTimeKey => session($sessionStartTimeKey, time())
+                ]);
+                
+                Log::info('Pretest answers saved', [
+                    'user_id' => $user->id,
+                    'language' => $language,
+                    'answer_count' => count($answers),
+                    'start_time' => session($sessionStartTimeKey)
+                ]);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'message' => $forceClear ? 'Answers cleared successfully' : 'Answers saved successfully'
+            ]);
+        }
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'User not authenticated'
+        ], 401);
+    }
+    
+    /**
+     * Get saved pretest answers
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getPretestAnswers(Request $request)
+    {
+        $language = $request->query('language', 'id');
+        
+        if (Auth::check()) {
+            $user = Auth::user();
+            $answers = session('pretest_answers_' . $language, []);
+            
+            // Log for debugging
+            Log::info('Retrieved pretest answers', [
+                'user_id' => $user->id,
+                'language' => $language,
+                'answer_count' => count($answers)
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'answers' => $answers
+            ]);
+        }
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'User not authenticated'
+        ], 401);
+    }
+    
+    /**
+     * Get pretest timer status
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getPretestTime(Request $request)
+    {
+        $language = $request->query('language', 'id');
+        
+        if (Auth::check()) {
+            $user = Auth::user();
+            $startTime = session('pretest_start_time_' . $language, null);
+            
+            // Log for debugging
+            Log::info('Retrieved pretest time', [
+                'user_id' => $user->id,
+                'language' => $language,
+                'start_time' => $startTime
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'start_time' => $startTime
+            ]);
+        }
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'User not authenticated'
+        ], 401);
+    }
+    
+    /**
+     * Save post-test answers during the test
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function savePostTestAnswers(Request $request)
+    {
+        // Log incoming request for debugging
+        \Log::info('Post-test save answers request', [
+            'content_type' => $request->header('Content-Type'),
+            'payload' => $request->all(),
+            'user' => Auth::id() ?? 'Not authenticated'
+        ]);
+        
+        try {
+            $validator = \Validator::make($request->all(), [
+                'answers' => 'required|array',
+                'language' => 'required|string|in:id,en,ru',
+            ]);
+            
+            if ($validator->fails()) {
+                \Log::error('Post-test save answers validation failed', [
+                    'errors' => $validator->errors()->toArray(),
+                    'input' => $request->all()
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+            
+            $answers = $request->input('answers');
+            $language = $request->input('language');
+            $forceClear = $request->input('force_clear', false);
+            
+            if (Auth::check()) {
+                $user = Auth::user();
+                $level = $user->getCurrentLevel($language);
+                
+                // Define session keys
+                $sessionStartTimeKey = 'post_test_start_time_' . $language . '_level_' . $level;
+                $sessionAnswersKey = 'post_test_answers_' . $language . '_level_' . $level;
+                
+                if ($forceClear) {
+                    // Just clear answers without affecting time if this is a force clear
+                    session([$sessionAnswersKey => []]);
+                    Log::info('Post-test answers cleared (force)', [
+                        'user_id' => $user->id,
+                        'language' => $language,
+                        'level' => $level
+                    ]);
+                } else {
+                    // Normal save operation
+                    session([
+                        $sessionAnswersKey => $answers,
+                        $sessionStartTimeKey => session($sessionStartTimeKey, time())
+                    ]);
+                    
+                    Log::info('Post-test answers saved', [
+                        'user_id' => $user->id,
+                        'language' => $language,
+                        'level' => $level,
+                        'answer_count' => count($answers),
+                        'start_time' => session($sessionStartTimeKey)
+                    ]);
+                }
+                
+                return response()->json([
+                    'success' => true,
+                    'message' => $forceClear ? 'Answers cleared successfully' : 'Answers saved successfully'
+                ]);
+            }
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'User not authenticated'
+            ], 401);
+        } catch (\Exception $e) {
+            \Log::error('Post-test save answers exception', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Server error: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Get saved post-test answers
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getPostTestAnswers(Request $request)
+    {
+        $language = $request->query('language', 'id');
+        
+        if (Auth::check()) {
+            $user = Auth::user();
+            $level = $user->getCurrentLevel($language);
+            $answers = session('post_test_answers_' . $language . '_level_' . $level, []);
+            
+            // Log for debugging
+            Log::info('Retrieved post-test answers', [
+                'user_id' => $user->id,
+                'language' => $language,
+                'level' => $level,
+                'answer_count' => count($answers)
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'answers' => $answers
+            ]);
+        }
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'User not authenticated'
+        ], 401);
+    }
+    
+    /**
+     * Get post-test timer status
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getPostTestTime(Request $request)
+    {
+        $language = $request->query('language', 'id');
+        
+        if (Auth::check()) {
+            $user = Auth::user();
+            $level = $user->getCurrentLevel($language);
+            $startTime = session('post_test_start_time_' . $language . '_level_' . $level, null);
+            
+            // Log for debugging
+            Log::info('Retrieved post-test time', [
+                'user_id' => $user->id,
+                'language' => $language,
+                'level' => $level,
+                'start_time' => $startTime
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'start_time' => $startTime
+            ]);
+        }
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'User not authenticated'
+        ], 401);
     }
 }

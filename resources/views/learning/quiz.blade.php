@@ -42,7 +42,7 @@
                 {{ session('quiz_result.passed') ? 'Selamat! Anda telah lulus kuis.' : 'Maaf, Anda belum lulus kuis.' }}
               </h5>
               <h1 class="display-4 {{ session('quiz_result.passed') ? 'text-success' : 'text-danger' }}">
-                {{ session('quiz_result.score') }}%
+                {{ session('quiz_result.score') !== null ? (int)session('quiz_result.score') : 0 }}%
               </h1>
               <div class="quiz-stats mt-3">
                 <div class="d-flex justify-content-center gap-4 mb-2">
@@ -131,6 +131,10 @@
                 Batas Waktu
                 <span class="badge bg-info">{{ $quiz->time_limit }} menit</span>
               </li>
+              <li id="countdown-timer" class="list-group-item d-flex justify-content-between align-items-center">
+                Waktu Tersisa
+                <span class="badge bg-danger"><i class="fas fa-clock me-1"></i> <span id="timer-display">--:--</span></span>
+              </li>
               @endif
               @if($progress->quiz_attempts > 0)
               <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -146,23 +150,14 @@
               @endif
             </ul>
             
-            @if($quiz->time_limit)
-            <div class="alert alert-warning mb-4" id="timer-container">
-              <div class="d-flex justify-content-between align-items-center">
-                <div>
-                  <i class="fas fa-clock me-2"></i> Waktu Tersisa
-                </div>
-                <div id="quiz-timer" class="fw-bold">{{ $quiz->time_limit }}:00</div>
-              </div>
-              <div class="progress mt-2" style="height: 5px;">
-                <div id="timer-progress" class="progress-bar bg-warning" role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
-              </div>
-            </div>
-            @endif
-            
             <div class="alert alert-info mb-4">
               <i class="fas fa-info-circle me-2"></i> Kerjakan kuis ini dengan jujur dan teliti. Anda tidak dapat kembali ke materi selama mengerjakan kuis.
+              @if($quiz->time_limit)
+              <br><i class="fas fa-exclamation-triangle me-2 mt-2"></i> Perhatikan waktu! Kuis akan otomatis terkirim saat waktu habis.
+              @endif
             </div>
+            
+
             
             <form id="quiz-form" action="{{ route('learning.material.quiz', $material->id) }}" method="POST">
               <div id="quiz-questions">
@@ -247,92 +242,527 @@
       // Jika sudah ada hasil quiz (dari session), sembunyikan form
       @if(session('quiz_result'))
         document.getElementById('quiz-form').style.display = 'none';
+        
+        // Reset jawaban untuk percobaan berikutnya
+        fetch('{{ route('learning.material.save-answers', $material->id) }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+          },
+          body: JSON.stringify({
+            answers: {},
+            reset: true
+          })
+        })
+        .then(response => response.json())
+        .then(data => {
+          console.log('Answers reset successfully after showing result');
+          
+                      // Jika auto_reset diaktifkan, redirect ke halaman kuis baru setelah beberapa detik
+            @if(session('auto_reset') && !session('quiz_result.passed'))
+              // Beri waktu untuk melihat hasil dulu (3 detik)
+              setTimeout(function() {
+                // Redirect ke halaman kuis baru dengan parameter reset
+                window.location.href = '{{ route('learning.material.quiz.show', $material->id) }}?reset_timer=1&reset_answers=1&_=' + Date.now();
+              }, 3000); // Tunggu 3 detik agar siswa bisa melihat hasil
+            @endif
+        })
+        .catch(error => {
+          console.error('Error resetting answers after showing result:', error);
+        });
       @endif
       
-      // Quiz timer functionality
-      @if($quiz->time_limit && !session('quiz_result'))
-      const timerElement = document.getElementById('quiz-timer');
-      const timerProgressBar = document.getElementById('timer-progress');
-      const submitBtn = document.getElementById('submit-quiz-btn');
-      
-      if (timerElement && timerProgressBar && submitBtn) {
-        const quizTimeLimit = {{ $quiz->time_limit }}; // In minutes
-        const totalSeconds = quizTimeLimit * 60;
-        let secondsRemaining = totalSeconds;
-        let timerInterval;
+      // FORCE RESET ALL ANSWERS - Ini lebih agresif untuk memastikan reset benar-benar terjadi
+      @if(isset($resetAnswers) && $resetAnswers)
+        console.log('FORCING ANSWER RESET: Clearing all selections');
         
-        // Function to format time as MM:SS
-        function formatTime(seconds) {
-          const mins = Math.floor(seconds / 60);
-          const secs = seconds % 60;
-          return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-        }
-        
-        // Function to update timer display
-        function updateTimer() {
-          secondsRemaining--;
-          
-          if (secondsRemaining <= 0) {
-            clearInterval(timerInterval);
-            timerElement.textContent = '0:00';
-            timerProgressBar.style.width = '0%';
-            timerElement.classList.add('text-danger');
-            
-            // Auto-submit the quiz
-            alert('Waktu habis! Jawaban Anda akan dikirim secara otomatis.');
-            document.getElementById('quiz-form').submit();
-            return;
-          }
-          
-          // Update timer display
-          timerElement.textContent = formatTime(secondsRemaining);
-          
-          // Update progress bar
-          const percentRemaining = (secondsRemaining / totalSeconds) * 100;
-          timerProgressBar.style.width = `${percentRemaining}%`;
-          
-          // Change color when time is running low
-          if (secondsRemaining <= 60) { // Last minute
-            timerElement.classList.add('text-danger');
-            timerProgressBar.classList.remove('bg-warning');
-            timerProgressBar.classList.add('bg-danger');
-          } else if (secondsRemaining <= 180) { // Last 3 minutes
-            timerElement.classList.add('text-warning');
-          }
-        }
-        
-        // Start the timer
-        timerInterval = setInterval(updateTimer, 1000);
-        
-        // Save timer state to session storage to handle page refreshes
-        window.addEventListener('beforeunload', function() {
-          sessionStorage.setItem('quizTimer', secondsRemaining);
-          sessionStorage.setItem('quizStartTime', Date.now() - ((totalSeconds - secondsRemaining) * 1000));
+        // Clear all radio button selections
+        const allRadios = document.querySelectorAll('input[type="radio"]');
+        allRadios.forEach(radio => {
+          radio.checked = false;
         });
         
-        // Check if there's a saved timer state
-        const savedTime = sessionStorage.getItem('quizTimer');
-        const savedStartTime = sessionStorage.getItem('quizStartTime');
+        // Force browser to forget form state
+        const quizForm = document.getElementById('quiz-form');
+        if (quizForm) {
+          quizForm.reset();
+          
+          // Add timestamp to prevent browser from restoring previous state
+          const timestamp = document.createElement('input');
+          timestamp.type = 'hidden';
+          timestamp.name = '_reset';
+          timestamp.value = Date.now();
+          quizForm.appendChild(timestamp);
+          
+          // Tambahkan hidden field untuk menandai bahwa ini adalah reset
+          const resetField = document.createElement('input');
+          resetField.type = 'hidden';
+          resetField.name = 'reset_confirmed';
+          resetField.value = '1';
+          quizForm.appendChild(resetField);
+        }
         
-        if (savedTime && savedStartTime) {
-          const elapsedSince = Math.floor((Date.now() - savedStartTime) / 1000);
-          secondsRemaining = Math.max(0, savedTime - elapsedSince);
+        // Clear any stored answers in localStorage too
+        try {
+          localStorage.removeItem('quiz_{{ $material->id }}_answers');
+        } catch (e) {
+          console.error('Failed to clear localStorage:', e);
+        }
+        
+        // Tambahan: Hapus semua jawaban yang tersimpan di database
+        // Gunakan XMLHttpRequest synchronous untuk memastikan ini selesai sebelum halaman dirender
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '{{ route('learning.material.save-answers', $material->id) }}', false); // false = synchronous
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.setRequestHeader('X-CSRF-TOKEN', document.querySelector('meta[name="csrf-token"]').getAttribute('content'));
+        xhr.send(JSON.stringify({
+          answers: {},
+          reset: true
+        }));
+        
+        console.log('Database answers cleared on page load (synchronous)');
+      @endif
+      
+      // Variables for timers
+      let statusCheckInterval;
+      let saveAnswersInterval;
+      let lastAnswerChange = 0;
+      let pendingSave = false;
+      
+      // Get initial timer data
+      let initialServerData = {
+        remaining_seconds: {{ $remainingSeconds ?? 0 }},
+        display_time: "{{ sprintf('%02d:%02d', floor(($remainingSeconds ?? 0) / 60), ($remainingSeconds ?? 0) % 60) }}",
+        is_time_up: {{ ($remainingSeconds ?? 0) <= 0 ? 'true' : 'false' }}
+      };
+      
+      // TIMER MANAGEMENT - Completely client-side with occasional server sync
+      let quizTimer = {
+        endTimeStamp: Date.now() + (initialServerData.remaining_seconds * 1000),
+        timerInterval: null,
+        lastServerSync: Date.now(),
+        timerDisplay: document.getElementById('timer-display'),
+        countdownElement: document.getElementById('countdown-timer'),
+        isTimeUp: initialServerData.is_time_up,
+        syncInProgress: false,
+        
+        // Start local timer that runs every second
+        start: function() {
+          if (this.isTimeUp) return;
           
-          // Update display immediately
-          timerElement.textContent = formatTime(secondsRemaining);
-          const percentRemaining = (secondsRemaining / totalSeconds) * 100;
-          timerProgressBar.style.width = `${percentRemaining}%`;
+          // Clear any existing interval
+          if (this.timerInterval) clearInterval(this.timerInterval);
           
-          if (secondsRemaining <= 0) {
-            // Time already expired
-            timerElement.textContent = '0:00';
-            timerProgressBar.style.width = '0%';
-            timerElement.classList.add('text-danger');
-            alert('Waktu habis! Jawaban Anda akan dikirim secara otomatis.');
-            document.getElementById('quiz-form').submit();
+          // Initial display update
+          this.update();
+          
+          // Set timer to update every second - PURELY CLIENT SIDE
+          this.timerInterval = setInterval(() => this.update(), 1000);
+          
+          // Schedule ONE server sync after 30 seconds
+          // Each sync will schedule the next one - no intervals
+          setTimeout(() => this.syncWithServer(), 30000);
+          
+          console.log('Quiz timer started - next sync in 30 seconds');
+        },
+        
+        // Update timer display using local time calculation ONLY
+        update: function() {
+          if (this.isTimeUp) return;
+          
+          const now = Date.now();
+          const remainingMs = this.endTimeStamp - now;
+          const remainingSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+          
+          // Format display
+          const minutes = Math.floor(remainingSeconds / 60);
+          const seconds = remainingSeconds % 60;
+          const display = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          
+          // Update display element
+          if (this.timerDisplay) {
+            this.timerDisplay.textContent = display;
+          }
+          
+          // Update styles based on time remaining
+          this.updateStyles(remainingSeconds);
+          
+          // Check if time is up
+          if (remainingSeconds <= 0) {
+            this.handleTimeUp();
+          }
+        },
+        
+        // Update visual styling based on remaining time
+        updateStyles: function(remainingSeconds) {
+          if (!this.timerDisplay || !this.countdownElement) return;
+          
+          if (remainingSeconds < 60) { // less than 1 minute
+            this.timerDisplay.parentElement.classList.add('bg-danger');
+            this.timerDisplay.parentElement.classList.add('pulse-animation');
+          } else if (remainingSeconds < 300) { // less than 5 minutes
+            this.timerDisplay.parentElement.classList.remove('bg-info');
+            this.timerDisplay.parentElement.classList.add('bg-warning');
+          }
+        },
+        
+        // Sync with server ONCE, then schedule next sync
+        syncWithServer: function() {
+          if (this.isTimeUp || this.syncInProgress) return;
+          
+          // Prevent multiple simultaneous syncs
+          this.syncInProgress = true;
+          
+          fetch('{{ route('learning.material.sync-timer', $material->id) }}')
+            .then(response => response.json())
+            .then(data => {
+              // Update end time based on server data
+              this.endTimeStamp = Date.now() + (data.remaining_seconds * 1000);
+              this.lastServerSync = Date.now();
+              this.syncInProgress = false;
+              
+              // Check if server says time is up
+              if (data.is_time_up) {
+                this.handleTimeUp();
+                return;
+              }
+              
+              // Schedule next sync in 30 seconds - NOT an interval
+              setTimeout(() => this.syncWithServer(), 30000);
+              console.log('Timer synced with server - next sync in 30 seconds');
+            })
+            .catch(error => {
+              console.error('Error syncing timer:', error);
+              this.syncInProgress = false;
+              
+              // Try again in 60 seconds if there was an error
+              setTimeout(() => this.syncWithServer(), 60000);
+            });
+        },
+        
+        // Handle timer expiration
+        handleTimeUp: function() {
+          if (this.isTimeUp) return;
+          
+          this.isTimeUp = true;
+          if (this.timerInterval) clearInterval(this.timerInterval);
+          
+          if (this.timerDisplay) {
+            this.timerDisplay.textContent = "00:00";
+          }
+          
+          if (this.countdownElement) {
+            this.countdownElement.classList.add('bg-danger', 'text-white');
+          }
+          
+          // Auto submit the form
+          const submitBtn = document.getElementById('submit-quiz-btn');
+          if (submitBtn) {
+            submitBtn.innerHTML = '<i class="fas fa-clock me-2"></i> Waktu Habis! Mengirim jawaban...';
+            submitBtn.disabled = true;
+          }
+          
+          // Save answers one last time
+          saveQuizAnswers(true);
+          
+          // Show message and redirect after a small delay
+          setTimeout(function() {
+            alert('Waktu pengerjaan kuis telah habis. Anda akan diarahkan ke halaman materi.');
+            window.location.href = '{{ route('learning.materials') }}';
+          }, 500);
+        },
+        
+        // Called when page visibility changes
+        handleVisibilityChange: function() {
+          if (document.visibilityState === 'visible' && !this.isTimeUp) {
+            // Force sync with server when tab becomes visible again
+            this.syncWithServer();
           }
         }
+      };
+      
+      // Function to check quiz status and redirect if necessary
+      let lastStatusCheck = 0;
+      let statusCheckInProgress = false;
+      
+      function checkQuizStatus() {
+        // Skip regular checks if timer is up
+        if (quizTimer.isTimeUp) return;
+        
+        // Prevent multiple simultaneous checks
+        if (statusCheckInProgress) return;
+        
+        // Limit check frequency
+        const now = Date.now();
+        if (now - lastStatusCheck < 60000) return; // Only check once per minute
+        
+        statusCheckInProgress = true;
+        lastStatusCheck = now;
+        
+        fetch('{{ route('learning.material.check-status', $material->id) }}?in_progress=1')
+          .then(response => response.json())
+          .then(data => {
+            statusCheckInProgress = false;
+            
+            if (data.redirect) {
+              // Show alert and redirect
+              alert(data.message);
+              
+              // Force redirect to materials page
+              if (data.redirect_url.includes('material.quiz.show')) {
+                window.location.href = '{{ route('learning.materials') }}';
+              } else {
+                window.location.href = data.redirect_url;
+              }
+            }
+          })
+          .catch(error => {
+            console.error('Error checking quiz status:', error);
+            statusCheckInProgress = false;
+          });
       }
+      
+      // Very infrequent status checks (once per minute)
+      // Use setTimeout instead of setInterval to prevent queue buildup
+      function scheduleNextStatusCheck() {
+        setTimeout(function() {
+          checkQuizStatus();
+          scheduleNextStatusCheck(); // Schedule next check
+        }, 60000);
+      }
+      
+      // Start the status check cycle
+      scheduleNextStatusCheck();
+      
+      // Check once on page load
+      checkQuizStatus();
+      
+      // Function to stop all timers
+      function stopAllTimers() {
+        if (quizTimer.timerInterval) clearInterval(quizTimer.timerInterval);
+        // No need to clear statusCheckInterval or saveAnswersInterval since we're using setTimeout
+      }
+      
+      // Function to save current quiz answers to server
+      let saveInProgress = false;
+      let lastSaveTime = 0;
+      
+      function saveQuizAnswers(force = false) {
+        const now = Date.now();
+        
+        // Prevent multiple simultaneous saves
+        if (saveInProgress) {
+          pendingSave = true;
+          return;
+        }
+        
+        // Only save if answers have changed or we're forcing a save
+        // Kurangi interval save menjadi 5 detik jika tidak dipaksa
+        if (!force && ((now - lastAnswerChange < 1000) || (now - lastSaveTime < 5000))) {
+          pendingSave = true;
+          return;
+        }
+        
+        const quizForm = document.getElementById('quiz-form');
+        if (!quizForm) return;
+        
+        // Collect answers
+        const formData = new FormData(quizForm);
+        const answers = {};
+        
+        for (const [key, value] of formData.entries()) {
+          const match = key.match(/answers\[(\d+)\]/);
+          if (match) {
+            const index = match[1];
+            answers[index] = value;
+          }
+        }
+        
+        // Selalu simpan, bahkan jika tidak ada jawaban
+        // Reset pending flag
+        pendingSave = false;
+        saveInProgress = true;
+        lastSaveTime = now;
+        
+        // Send to server
+        fetch('{{ route('learning.material.save-answers', $material->id) }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+          },
+          body: JSON.stringify({
+            answers: answers
+          })
+        })
+        .then(response => response.json())
+        .then(data => {
+          console.log('Answers saved successfully');
+          saveInProgress = false;
+        })
+        .catch(error => {
+          console.error('Error saving answers:', error);
+          saveInProgress = false;
+        });
+      }
+      
+      // Save answers only when changed (with debounce) or on very infrequent interval
+      function debouncedSave() {
+        if (pendingSave) {
+          saveQuizAnswers(true);
+        }
+      }
+      
+      // Use setTimeout for periodic saves instead of setInterval
+      function scheduleNextSave() {
+        setTimeout(function() {
+          debouncedSave();
+          scheduleNextSave(); // Schedule next save
+        }, 10000); // Simpan setiap 10 detik untuk memastikan jawaban tersimpan
+      }
+      
+      // Start the save cycle
+      scheduleNextSave();
+      
+      // Simpan jawaban sekali pada awal load halaman dan setiap kali ada perubahan
+      setTimeout(function() {
+        saveQuizAnswers(true);
+        console.log('Initial save completed');
+      }, 2000);
+      
+      // Debug: Log status setiap 5 detik untuk memastikan jawaban tersimpan
+      setInterval(function() {
+        const quizForm = document.getElementById('quiz-form');
+        if (!quizForm) return;
+        
+        const formData = new FormData(quizForm);
+        const answers = {};
+        
+        for (const [key, value] of formData.entries()) {
+          const match = key.match(/answers\[(\d+)\]/);
+          if (match) {
+            const index = match[1];
+            answers[index] = value;
+          }
+        }
+        
+        console.log('Current answers state:', answers);
+      }, 5000);
+      
+      // Restore previously saved answers
+      function restoreSavedAnswers() {
+        // Selalu coba ambil jawaban terbaru dari server terlebih dahulu
+        fetch('{{ route('learning.material.get-answers', $material->id) }}')
+        .then(response => response.json())
+        .then(data => {
+          console.log('Fetched latest answers from server:', data);
+          
+          if (data.success && data.answers) {
+            // Loop through saved answers and select them
+            Object.entries(data.answers).forEach(([index, value]) => {
+              const input = document.querySelector(`input[name="answers[${index}]"][value="${value}"]`);
+              if (input) {
+                input.checked = true;
+              }
+            });
+          } else {
+            // Fallback ke jawaban dari template jika tidak bisa ambil dari server
+            @if(!empty($tempAnswers) && !isset($resetAnswers))
+            console.log('Using template answers as fallback');
+            const savedAnswers = @json($tempAnswers);
+            
+            // Loop through saved answers and select them
+            Object.entries(savedAnswers).forEach(([index, value]) => {
+              const input = document.querySelector(`input[name="answers[${index}]"][value="${value}"]`);
+              if (input) {
+                input.checked = true;
+              }
+            });
+            @endif
+          }
+        })
+        .catch(error => {
+          console.error('Error fetching latest answers:', error);
+          
+          // Fallback ke jawaban dari template jika gagal
+          @if(!empty($tempAnswers) && !isset($resetAnswers))
+          console.log('Using template answers as fallback due to error');
+          const savedAnswers = @json($tempAnswers);
+          
+          // Loop through saved answers and select them
+          Object.entries(savedAnswers).forEach(([index, value]) => {
+            const input = document.querySelector(`input[name="answers[${index}]"][value="${value}"]`);
+            if (input) {
+              input.checked = true;
+            }
+          });
+          @endif
+        });
+      }
+      
+              // Also save when tab becomes hidden or user navigates away
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'hidden') {
+          saveQuizAnswers(true);
+        } else if (document.visibilityState === 'visible') {
+          quizTimer.handleVisibilityChange();
+          checkQuizStatus();
+        }
+      });
+      
+      // Simpan jawaban saat pengguna akan meninggalkan halaman
+      window.addEventListener('beforeunload', function(e) {
+        // Gunakan synchronous XMLHttpRequest untuk memastikan data tersimpan sebelum halaman ditutup
+        const xhr = new XMLHttpRequest();
+        const quizForm = document.getElementById('quiz-form');
+        if (!quizForm) return;
+        
+        // Collect answers
+        const formData = new FormData(quizForm);
+        const answers = {};
+        
+        for (const [key, value] of formData.entries()) {
+          const match = key.match(/answers\[(\d+)\]/);
+          if (match) {
+            const index = match[1];
+            answers[index] = value;
+          }
+        }
+        
+        // Kirim request secara synchronous
+        xhr.open('POST', '{{ route('learning.material.save-answers', $material->id) }}', false); // false = synchronous
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.setRequestHeader('X-CSRF-TOKEN', document.querySelector('meta[name="csrf-token"]').getAttribute('content'));
+        xhr.send(JSON.stringify({answers: answers}));
+        
+        // Tampilkan pesan konfirmasi (opsional)
+        e.returnValue = 'Jawaban Anda telah disimpan.';
+      });
+      
+      // Reset answers button handler
+      const resetAnswersBtn = document.getElementById('reset-answers-btn');
+      if (resetAnswersBtn) {
+        resetAnswersBtn.addEventListener('click', function() {
+          if (confirm('Apakah Anda yakin ingin mengosongkan semua jawaban?')) {
+            // Reset form locally
+            const quizForm = document.getElementById('quiz-form');
+            if (quizForm) {
+              quizForm.reset();
+            }
+            
+            // Reset answers in database and reload
+            resetAllSavedAnswers();
+          }
+        });
+      }
+      
+      // Restore saved answers on page load
+      restoreSavedAnswers();
+      
+      // Start timer if quiz has time limit
+      @if($quiz && $quiz->time_limit)
+        quizTimer.start();
       @endif
       
       // Quiz submission
@@ -340,15 +770,12 @@
       const quizQuestions = document.getElementById('quiz-questions');
       const quizResult = document.getElementById('quiz-result');
       
-      // Clear timer data from sessionStorage when quiz is submitted
-      function clearTimerData() {
-        sessionStorage.removeItem('quizTimer');
-        sessionStorage.removeItem('quizStartTime');
-      }
-      
       if (quizForm) {
         quizForm.addEventListener('submit', function(e) {
           e.preventDefault();
+          
+          // Stop all timers when submitting
+          stopAllTimers();
           
           // Disable submit button to prevent multiple submissions
           const submitBtn = document.getElementById('submit-quiz-btn');
@@ -369,11 +796,6 @@
             }
           }
           
-                      console.log('Submitting answers:', answers);
-          
-          // Clear timer data when submitting
-          clearTimerData();
-          
           // Submit quiz
           fetch('{{ route("learning.material.quiz", $material->id) }}?ajax=1', {
             method: 'POST',
@@ -386,12 +808,9 @@
             })
           })
           .then(response => {
-            console.log('Response status:', response.status);
             return response.json();
           })
           .then(data => {
-            console.log('Quiz submission response:', data);
-            
             if (submitBtn) {
               submitBtn.disabled = false;
               submitBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i> Kirim Jawaban';
@@ -405,7 +824,9 @@
               const resultMessage = document.querySelector('.result-message');
               const passFailMessage = document.querySelector('.pass-fail-message');
               
-              if (scoreDisplay) scoreDisplay.textContent = data.score + '%';
+              // Ensure score is always a number, default to 0 if undefined
+              const score = data.score !== undefined ? parseInt(data.score) : 0;
+              if (scoreDisplay) scoreDisplay.textContent = score + '%';
               
               // Update statistics
               document.getElementById('correct-count').textContent = data.correct_count || 0;
@@ -494,6 +915,67 @@
                 }
                 if (scoreDisplay) scoreDisplay.className = 'display-4 score-display text-danger';
                 if (passFailMessage) passFailMessage.textContent = `Skor minimum kelulusan adalah ${data.passing_score}%. Silakan coba lagi.`;
+                
+                // Ensure retry button is visible and has event handler
+                const retryBtn = document.getElementById('retry-quiz-btn');
+                if (retryBtn) {
+                  retryBtn.style.display = 'block';
+                  // Clear any existing event listeners
+                  const newRetryBtn = retryBtn.cloneNode(true);
+                  retryBtn.parentNode.replaceChild(newRetryBtn, retryBtn);
+                  
+                  // Add event listener
+                  newRetryBtn.addEventListener('click', function() {
+                    // Reset answers and reload
+                    resetAllSavedAnswers();
+                  });
+                }
+              }
+              
+              // Reset temporary answers in the database to ensure a clean slate for next attempt
+              // Reset form locally first
+              const quizForm = document.getElementById('quiz-form');
+              if (quizForm) {
+                quizForm.reset();
+                
+                // Clear all radio button selections
+                const allRadios = document.querySelectorAll('input[type="radio"]');
+                allRadios.forEach(radio => {
+                  radio.checked = false;
+                });
+              }
+              
+              // Kemudian reset di database
+              if (!data.passed) {
+                // Beri waktu untuk melihat hasil dulu (3 detik)
+                setTimeout(function() {
+                  // Gunakan XMLHttpRequest synchronous untuk memastikan data benar-benar tereset
+                  const xhr = new XMLHttpRequest();
+                  xhr.open('POST', '{{ route('learning.material.save-answers', $material->id) }}', false); // false = synchronous
+                  xhr.setRequestHeader('Content-Type', 'application/json');
+                  xhr.setRequestHeader('X-CSRF-TOKEN', document.querySelector('meta[name="csrf-token"]').getAttribute('content'));
+                  xhr.send(JSON.stringify({
+                    answers: {},
+                    reset: true
+                  }));
+                  
+                  console.log('Answers cleared after submission (synchronous)');
+                  
+                  // Redirect ke halaman kuis baru dengan parameter reset
+                  window.location.href = '{{ route('learning.material.quiz.show', $material->id) }}?reset_timer=1&reset_answers=1&force_clear=1&_=' + Date.now();
+                }, 3000); // Tunggu 3 detik agar siswa bisa melihat hasil
+              } else {
+                // Jika lulus, hanya reset jawaban tanpa redirect
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '{{ route('learning.material.save-answers', $material->id) }}', false); // false = synchronous
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.setRequestHeader('X-CSRF-TOKEN', document.querySelector('meta[name="csrf-token"]').getAttribute('content'));
+                xhr.send(JSON.stringify({
+                  answers: {},
+                  reset: true
+                }));
+                
+                console.log('Answers cleared after successful submission (synchronous)');
               }
             }
           })
@@ -505,6 +987,18 @@
               submitBtn.disabled = false;
               submitBtn.innerHTML = '<i class="fas fa-paper-plane me-2"></i> Kirim Jawaban';
             }
+          });
+        });
+        
+        // Add change event listeners to all radio buttons to track answer changes
+        const radioButtons = quizForm.querySelectorAll('input[type="radio"]');
+        radioButtons.forEach(radio => {
+          radio.addEventListener('change', function() {
+            lastAnswerChange = Date.now();
+            pendingSave = true;
+            
+            // Simpan segera saat ada perubahan jawaban
+            saveQuizAnswers(true);
           });
         });
       }
@@ -521,38 +1015,53 @@
           quizResult.style.display = 'none';
           quizQuestions.style.display = 'block';
           
-          // Reset timer if exists
-          @if($quiz->time_limit && !session('quiz_result'))
-          // Reset timer state
-          if (timerElement && timerProgressBar) {
-            // Clear any existing interval
-            if (timerInterval) {
-              clearInterval(timerInterval);
-            }
-            
-            // Reset timer display
-            const quizTimeLimit = {{ $quiz->time_limit }}; // In minutes
-            const totalSeconds = quizTimeLimit * 60;
-            secondsRemaining = totalSeconds;
-            
-            timerElement.textContent = formatTime(secondsRemaining);
-            timerElement.classList.remove('text-danger', 'text-warning');
-            
-            timerProgressBar.style.width = '100%';
-            timerProgressBar.classList.add('bg-warning');
-            timerProgressBar.classList.remove('bg-danger');
-            
-            // Restart timer
-            timerInterval = setInterval(updateTimer, 1000);
-            
-            // Update session storage
-            sessionStorage.setItem('quizTimer', secondsRemaining);
-            sessionStorage.setItem('quizStartTime', Date.now());
-          }
-          @endif
+          // Hapus semua jawaban yang tersimpan sebelumnya
+          resetAllSavedAnswers();
         });
+      }
+      
+      // Fungsi untuk menghapus semua jawaban tersimpan
+      function resetAllSavedAnswers() {
+        // Reset form locally first
+        const quizForm = document.getElementById('quiz-form');
+        if (quizForm) {
+          quizForm.reset();
+          
+          // Clear all radio button selections
+          const allRadios = document.querySelectorAll('input[type="radio"]');
+          allRadios.forEach(radio => {
+            radio.checked = false;
+          });
+        }
+        
+        // Clear saved answers in database before refreshing - use synchronous request
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '{{ route('learning.material.save-answers', $material->id) }}', false); // false = synchronous
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.setRequestHeader('X-CSRF-TOKEN', document.querySelector('meta[name="csrf-token"]').getAttribute('content'));
+        xhr.send(JSON.stringify({
+          answers: {},
+          reset: true
+        }));
+        
+        console.log('Answers reset successfully (synchronous)');
+        
+        // Redirect to a fresh quiz page with reset parameters
+        window.location.href = '{{ route('learning.material.quiz.show', $material->id) }}?reset_timer=1&reset_answers=1&force_clear=1&_=' + Date.now();
       }
     });
   </script>
+  
+  <style>
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+      100% { transform: scale(1); }
+    }
+    
+    .pulse-animation {
+      animation: pulse 1s infinite;
+    }
+  </style>
   @endpush
 </x-app-layout> 

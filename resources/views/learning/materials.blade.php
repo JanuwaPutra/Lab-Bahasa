@@ -66,11 +66,11 @@
                   <div class="d-flex justify-content-between align-items-center mt-2">
                     <small class="text-muted">{{ $material->duration }} menit</small>
                     <div>
-                      @if(!$userProgress[$material->id]->quiz_passed && $userProgress[$material->id]->completed && $material->quiz)
-                        <a href="{{ route('learning.material.quiz.show', $material->id) }}" class="btn btn-sm btn-warning me-2">
-                          <i class="fas fa-question-circle me-1"></i> Kerjakan Kuis
+                        <a href="{{ route('learning.material.quiz.show', $material->id) }}?start_new=1" class="btn btn-sm btn-warning me-2">
+                          <i class="fas fa-question-circle me-1"></i> 
+                            Kerjakan Kuis
                         </a>
-                      @endif
+
                       
                       @if(!$material->canUserAccess(Auth::id()))
                         <button class="btn btn-sm btn-secondary" disabled>

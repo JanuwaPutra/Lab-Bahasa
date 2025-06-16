@@ -29,11 +29,19 @@ use App\Http\Controllers\MaterialQuizController;
 // Home routes
 Route::get('/', [HomeController::class, 'index'])->name('home');
 Route::get('/dashboardd', [HomeController::class, 'dashboard'])->name('dashboard');
-Route::get('/profile', [HomeController::class, 'profile'])->name('profile');
-Route::get('/reset-data', [HomeController::class, 'resetData'])->name('reset-data');
-Route::post('/set-language', [HomeController::class, 'setLanguage'])->name('set-language');
 
-// Evaluation route
+
+
+
+// Language-specific post-test routes - all require authentication
+Route::middleware(['auth'])->group(function () {
+    Route::get('/post-test', [AssessmentController::class, 'postTest'])->name('post-test');
+    Route::get('/post-test/{language}', [AssessmentController::class, 'postTest'])->name('post-test.language');
+    Route::post('/post-test', [AssessmentController::class, 'evaluatePostTest'])->name('post-test.evaluate');
+    Route::post('/post-test/save-answers', [AssessmentController::class, 'savePostTestAnswers'])->name('post-test.save-answers');
+    Route::get('/post-test/get-answers', [AssessmentController::class, 'getPostTestAnswers'])->name('post-test.get-answers');
+    Route::get('/post-test/get-time', [AssessmentController::class, 'getPostTestTime'])->name('post-test.get-time');
+    // Evaluation route
 Route::get('/evaluation', [EvaluationController::class, 'index'])->name('evaluation');
 
 // Grammar routes
@@ -57,11 +65,10 @@ Route::post('/grammar-test', [AssessmentController::class, 'evaluateGrammarTest'
 Route::get('/pretest', [AssessmentController::class, 'pretest'])->name('pretest');
 Route::get('/pretest/{language}', [AssessmentController::class, 'pretest'])->name('pretest.language');
 Route::post('/pretest', [AssessmentController::class, 'evaluatePretest'])->name('pretest.evaluate');
-
-// Language-specific post-test routes
-Route::get('/post-test', [AssessmentController::class, 'postTest'])->name('post-test');
-Route::get('/post-test/{language}', [AssessmentController::class, 'postTest'])->name('post-test.language');
-Route::post('/post-test', [AssessmentController::class, 'evaluatePostTest'])->name('post-test.evaluate');
+Route::post('/pretest/save-answers', [AssessmentController::class, 'savePretestAnswers'])->name('pretest.save-answers')->middleware(['web', 'auth']);
+Route::get('/pretest/get-answers', [AssessmentController::class, 'getPretestAnswers'])->name('pretest.get-answers')->middleware(['web', 'auth']);
+Route::get('/pretest/get-time', [AssessmentController::class, 'getPretestTime'])->name('pretest.get-time')->middleware(['web', 'auth']);
+});
 
 Route::get('/listening-test', [AssessmentController::class, 'listeningTest'])->name('listening-test');
 Route::post('/listening-test', [AssessmentController::class, 'evaluateListeningTest'])->name('listening-test.evaluate');
@@ -84,18 +91,32 @@ Route::post('/learning-material/{id}/quiz', [LearningController::class, 'submitQ
 Route::get('/learning-check-post-test', [LearningController::class, 'checkPostTestEligibility'])->name('learning.check-post-test');
 Route::post('/learning-evaluate', [LearningController::class, 'evaluateAnswer'])->name('learning.evaluate');
 
+// Learning material routes
+Route::get('/learning-material/{material}/sync-timer', [LearningController::class, 'syncQuizTimer'])->name('learning.material.sync-timer');
+Route::get('/learning-material/{material}/check-status', [LearningController::class, 'checkQuizStatus'])->name('learning.material.check-status');
+Route::post('/learning-material/{material}/save-answers', [LearningController::class, 'saveQuizAnswers'])->name('learning.material.save-answers');
+Route::get('/learning-material/{material}/get-answers', [LearningController::class, 'getQuizAnswers'])->name('learning.material.get-answers');
+
 // Virtual Tutor routes
-Route::get('/virtual-tutor', [VirtualTutorController::class, 'index'])->name('virtual-tutor');
-Route::post('/virtual-tutor/chat', [VirtualTutorController::class, 'chat'])->name('virtual-tutor.chat');
-Route::post('/virtual-tutor/speaking', [VirtualTutorController::class, 'speaking'])->name('virtual-tutor.speaking');
-Route::get('/virtual-tutor/languages', [VirtualTutorController::class, 'getLanguages'])->name('virtual-tutor.languages');
-Route::get('/virtual-tutor/topics', [VirtualTutorController::class, 'getTopics'])->name('virtual-tutor.topics');
-Route::get('/virtual-tutor/history', [VirtualTutorController::class, 'getConversationHistory'])->name('virtual-tutor.history');
-Route::post('/virtual-tutor/reset', [VirtualTutorController::class, 'resetConversation'])->name('virtual-tutor.reset');
+Route::middleware(['auth'])->group(function () {
+    Route::get('/virtual-tutor', [VirtualTutorController::class, 'index'])->name('virtual-tutor');
+    Route::post('/virtual-tutor/chat', [VirtualTutorController::class, 'chat'])->name('virtual-tutor.chat');
+    Route::post('/virtual-tutor/speaking', [VirtualTutorController::class, 'speaking'])->name('virtual-tutor.speaking');
+    Route::get('/virtual-tutor/languages', [VirtualTutorController::class, 'getLanguages'])->name('virtual-tutor.languages');
+    Route::get('/virtual-tutor/topics', [VirtualTutorController::class, 'getTopics'])->name('virtual-tutor.topics');
+    Route::get('/virtual-tutor/history', [VirtualTutorController::class, 'getConversationHistory'])->name('virtual-tutor.history');
+    Route::post('/virtual-tutor/reset', [VirtualTutorController::class, 'resetConversation'])->name('virtual-tutor.reset');
+});
 
 // YouTube Transcription routes
-Route::get('/youtube-transcription', [YouTubeTranscriptionController::class, 'index'])->name('youtube-transcription');
-Route::post('/youtube-transcription', [YouTubeTranscriptionController::class, 'transcribe'])->name('youtube-transcription.transcribe');
+Route::middleware(['auth'])->group(function () {
+    Route::get('/youtube-transcription', [YouTubeTranscriptionController::class, 'index'])->name('youtube-transcription');
+    Route::post('/youtube-transcription', [YouTubeTranscriptionController::class, 'transcribe'])->name('youtube-transcription.transcribe');
+});
+
+Route::get('/profile', [HomeController::class, 'profile'])->name('profile');
+Route::get('/reset-data', [HomeController::class, 'resetData'])->name('reset-data');
+Route::post('/set-language', [HomeController::class, 'setLanguage'])->name('set-language');
 
 // Question Management routes (for teachers)
 Route::middleware(['auth'])->group(function () {
@@ -148,6 +169,16 @@ Auth::routes();
 
 Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name('home');
 
+// CSRF token refresh route
+Route::get('/refresh-csrf', function() {
+    return response()->json(['token' => csrf_token()]);
+})->name('refresh-csrf');
+
+// Add a new route that matches the one used in post_test.blade.php
+Route::get('/refresh-csrf-token', function() {
+    return response()->json(['token' => csrf_token()]);
+})->name('refresh-csrf-token');
+
 // Debug route
 Route::get('/debug-user', function () {
     if (!Auth::check()) {
@@ -186,3 +217,15 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/teacher/evaluation-settings/{student}', [EvaluationController::class, 'showStudentSettings'])->name('teacher.evaluation.student');
     Route::post('/teacher/evaluation-settings/{student}', [EvaluationController::class, 'updateStudentSettings'])->name('teacher.evaluation.update');
 });
+
+// Quiz history routes
+Route::middleware('auth')->prefix('quiz-history')->name('quiz.history.')->group(function () {
+    Route::get('/', [App\Http\Controllers\LearningController::class, 'quizHistory'])->name('index');
+    Route::get('/{id}', [App\Http\Controllers\LearningController::class, 'quizHistoryDetail'])->name('detail');
+});
+
+// Question import/export routes
+Route::get('/questions/export', [QuestionController::class, 'export'])->name('questions.export');
+Route::get('/questions/import/template', [QuestionController::class, 'downloadTemplate'])->name('questions.template.download');
+Route::get('/questions/import/form', [QuestionController::class, 'importForm'])->name('questions.import.form');
+Route::post('/questions/import', [QuestionController::class, 'import'])->name('questions.import');

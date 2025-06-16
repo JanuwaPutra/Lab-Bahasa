@@ -90,6 +90,9 @@
                     
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end">
                         <a href="{{ route('progress-report') }}" class="btn btn-outline-primary">{{ __('Full Progress Report') }}</a>
+                        <a href="{{ route('quiz.history.index') }}" class="btn btn-outline-warning">
+                            <i class="fas fa-history me-1"></i> {{ __('Quiz History') }}
+                        </a>
                     </div>
                     @else
                     <div class="mb-4">

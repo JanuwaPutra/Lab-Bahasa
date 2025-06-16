@@ -62,7 +62,7 @@
                   </select>
                 </div>
                 
-                <div class="col-md-4">
+                <div class="col-md-4" id="points-container" style="{{ $question->type == 'multiple_choice' || $question->type == 'true_false' ? 'display:none;' : '' }}">
                   <label for="points" class="form-label">Skor Default</label>
                   <div class="input-group">
                     <input type="number" name="points" id="points" class="form-control" min="1" value="{{ old('points', $question->points) }}" required>

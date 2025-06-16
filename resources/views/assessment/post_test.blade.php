@@ -363,8 +363,14 @@
       const timerSeconds = document.getElementById('timer-seconds');
       const timerProgress = document.getElementById('timer-progress');
       
-      const TEST_TIME = {{ $timeLimit ?? 45 }} * 60; // minutes in seconds
+      // Waktu tes dalam detik, ambil dari database atau gunakan default
+      const TEST_TIME = {{ isset($timeLimit) ? $timeLimit * 60 : 45 * 60 }}; // minutes in seconds
       const STORAGE_PREFIX = 'post_test_level_{{ $level ?? auth()->user()->getCurrentLevel() ?? 1 }}_';
+      
+      // Server connectivity tracking
+      let serverErrorCount = 0;
+      const MAX_SERVER_ERRORS = 3; // After this many errors, we'll assume server is unreachable
+      let isOfflineMode = false;
       
       // Anti-cheating variables
       let warningCount = 0;
@@ -373,6 +379,48 @@
       let isFullscreenMode = false;
       let visibilityWarningShown = false;
       let warningOverlay = null;
+      
+      // Function to handle server errors
+      function handleServerError(error, operation) {
+        console.error(`Error during ${operation}:`, error);
+        
+        serverErrorCount++;
+        
+        // If we've had too many server errors, show a warning but continue
+        if (serverErrorCount >= MAX_SERVER_ERRORS && !isOfflineMode) {
+          console.warn(`Reached maximum server errors (${MAX_SERVER_ERRORS}). Switching to offline mode.`);
+          isOfflineMode = true;
+          
+          // Show a non-blocking notification
+          const notification = document.createElement('div');
+          notification.style.position = 'fixed';
+          notification.style.bottom = '20px';
+          notification.style.right = '20px';
+          notification.style.backgroundColor = 'rgba(255, 193, 7, 0.9)';
+          notification.style.color = '#000';
+          notification.style.padding = '10px 20px';
+          notification.style.borderRadius = '5px';
+          notification.style.zIndex = '9999';
+          notification.style.maxWidth = '300px';
+          notification.innerHTML = '<strong>Peringatan:</strong> Koneksi ke server terganggu. Tes akan dilanjutkan dalam mode offline. Jawaban Anda akan disimpan secara lokal.';
+          
+          document.body.appendChild(notification);
+          
+          // Remove notification after 5 seconds
+          setTimeout(() => {
+            if (notification.parentNode) {
+              notification.parentNode.removeChild(notification);
+            }
+          }, 5000);
+        }
+        
+        // If it looks like a CSRF token issue, try to refresh it
+        if (error.message && (error.message.includes('419') || error.message.includes('CSRF') || error.message.includes('token'))) {
+          return refreshCsrfToken();
+        }
+        
+        return Promise.resolve(); // Continue the flow
+      }
       
       // Cek apakah tes sudah dimulai sebelumnya
       function checkTestStatus() {
@@ -384,10 +432,46 @@
           // Test sudah dimulai sebelumnya
           startTest(false);
           
-          // Kembalikan jawaban-jawaban yang tersimpan
-          if (answers) {
-            restoreAnswers(JSON.parse(answers));
-          }
+          // Selalu coba ambil jawaban terbaru dari server terlebih dahulu
+          fetch('{{ route('post-test.get-answers') }}?language={{ $language ?? 'id' }}', {
+            headers: {
+              'Accept': 'application/json'
+            }
+          })
+          .then(response => {
+            // Check if response is JSON
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+              return response.json();
+            } else {
+              // If not JSON, session might have expired - refresh CSRF token
+              return refreshCsrfToken().then(() => {
+                throw new Error('Session might have expired when getting answers, CSRF token refreshed');
+              });
+            }
+          })
+          .then(data => {
+            console.log('Fetched latest answers from server:', data);
+            
+            if (data.success && data.answers) {
+              // Restore jawaban dari server
+              restoreAnswers(data.answers);
+              serverErrorCount = 0; // Reset error count on success
+            } else if (answers) {
+              // Fallback ke localStorage jika server tidak punya data
+              console.log('Using localStorage answers as fallback');
+              restoreAnswers(JSON.parse(answers));
+            }
+          })
+          .catch(error => {
+            handleServerError(error, 'fetching latest answers');
+            
+            // Fallback ke localStorage jika ada error
+            if (answers) {
+              console.log('Using localStorage answers due to error');
+              restoreAnswers(JSON.parse(answers));
+            }
+          });
         }
       }
       
@@ -410,6 +494,46 @@
           warningOverlay.parentNode.removeChild(warningOverlay);
           warningOverlay = null;
         }
+        
+        // Get fresh CSRF token
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        
+        // Juga reset data jawaban di server
+        // Force clear parameter prevents redirect
+        fetch('{{ route('post-test.save-answers') }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': csrfToken,
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            answers: [], // Make sure it's an array for Laravel validation
+            language: '{{ $language ?? "id" }}',
+            force_clear: true
+          })
+        })
+        .then(response => {
+          // Check if response is JSON
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            return response.json();
+          } else {
+            // If not JSON, session might have expired - refresh CSRF token
+            return refreshCsrfToken().then(() => {
+              console.log('Session might have expired when clearing answers, CSRF token refreshed');
+              return { success: false };
+            });
+          }
+        })
+        .then(data => {
+          console.log('Answers cleared on server');
+          serverErrorCount = 0; // Reset error count on success
+        })
+        .catch(error => {
+          handleServerError(error, 'clearing answers on server');
+          // No need to alert user or retry here
+        });
       }
       
       // Start the test
@@ -436,6 +560,43 @@
           localStorage.setItem(`${STORAGE_PREFIX}is_started`, 'true');
           localStorage.setItem(`${STORAGE_PREFIX}answers`, JSON.stringify({}));
           localStorage.setItem(`${STORAGE_PREFIX}warning_count`, '0');
+          
+          // Get fresh CSRF token
+          const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+          
+          // Juga simpan waktu mulai ke server
+          fetch('{{ route('post-test.save-answers') }}', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-TOKEN': csrfToken,
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+              answers: [], // Make sure it's an array for Laravel validation
+              language: '{{ $language ?? "id" }}'
+            })
+          })
+          .then(response => {
+            // Check if response is JSON
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+              return response.json();
+            } else {
+              // If not JSON, session might have expired - refresh CSRF token
+              return refreshCsrfToken().then(() => {
+                throw new Error('Session might have expired when saving start time, CSRF token refreshed');
+              });
+            }
+          })
+          .then(data => {
+            console.log('Start time saved to server');
+            serverErrorCount = 0; // Reset error count on success
+          })
+          .catch(error => {
+            handleServerError(error, 'saving start time');
+            // Continue anyway, we have the start time in localStorage
+          });
         } else {
           // Restore warning count if exists
           const savedWarningCount = localStorage.getItem(`${STORAGE_PREFIX}warning_count`);
@@ -750,27 +911,44 @@
         // Reset test state completely
         resetTestState();
         
+        // Get fresh CSRF token
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        
         // Submit with zero score
         fetch('{{ route("post-test.evaluate") }}', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+            'X-CSRF-TOKEN': csrfToken,
+            'Accept': 'application/json'
           },
           body: JSON.stringify({ 
-            answers: {},
+            answers: [], // Make sure it's an array for Laravel validation
             language: '{{ $language ?? "id" }}',
             cheating_detected: true
           })
         })
-        .then(response => response.json())
+        .then(response => {
+          // Check if response is JSON
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            return response.json();
+          } else {
+            // If not JSON, just redirect anyway
+            throw new Error('Non-JSON response when submitting zero score');
+          }
+        })
         .then(data => {
           // Redirect to result page
           window.location.href = '{{ route("dashboard") }}?from_post_test=true&cheating=true';
+          serverErrorCount = 0; // Reset error count on success
         })
         .catch(error => {
-          console.error('Error submitting test:', error);
-          window.location.href = '{{ route("dashboard") }}?from_post_test=true&cheating=true';
+          handleServerError(error, 'submitting zero score test');
+          // Redirect anyway after a short delay
+          setTimeout(() => {
+            window.location.href = '{{ route("dashboard") }}?from_post_test=true&cheating=true';
+          }, 1000);
         });
       }
       
@@ -820,6 +998,11 @@
             saveAnswers();
           }
           
+          // Tambahan: setiap 30 detik, coba cek waktu dari server (sinkronisasi)
+          if (remaining % 30 === 0) {
+            syncTimeWithServer();
+          }
+          
           if (remaining <= 0) {
             clearInterval(window.timerInterval);
             window.timerInterval = null;
@@ -848,6 +1031,70 @@
         } else {
           timerProgress.className = 'progress-bar bg-success';
         }
+      }
+      
+      // Sync time with server
+      function syncTimeWithServer() {
+        // Fetch current server time and update timer accordingly
+        fetch('{{ route('post-test.get-time') }}?language={{ $language ?? 'id' }}', {
+          headers: {
+            'Accept': 'application/json'
+          }
+        })
+        .then(response => {
+          // Check if response is JSON
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            return response.json();
+          } else {
+            // If not JSON, session might have expired - refresh CSRF token
+            return refreshCsrfToken().then(() => {
+              throw new Error('Session might have expired during time sync, CSRF token refreshed');
+            });
+          }
+        })
+        .then(data => {
+          if (data.success && data.start_time) {
+            const serverStartTime = parseInt(data.start_time);
+            const currentTime = Math.floor(Date.now() / 1000);
+            const elapsedFromServer = currentTime - serverStartTime;
+            
+            // If server has a valid start time, update our timer
+            if (serverStartTime > 0) {
+              // Update localStorage with server's start time
+              localStorage.setItem(`${STORAGE_PREFIX}start_time`, serverStartTime);
+              
+              // Calculate new remaining time
+              const newRemaining = TEST_TIME - elapsedFromServer;
+              
+              // If there's a significant difference (more than 10 seconds)
+              // between our timer and server's timer, update it
+              if (Math.abs(newRemaining - remaining) > 10) {
+                console.log('Syncing time with server. Old remaining:', remaining, 'New remaining:', newRemaining);
+                
+                // Update the remaining time globally
+                remaining = Math.max(0, newRemaining);
+                
+                // Update display immediately
+                updateTimerDisplay(remaining);
+                
+                // If time's up according to server, submit the test
+                if (remaining <= 0) {
+                  clearInterval(window.timerInterval);
+                  window.timerInterval = null;
+                  submitTest();
+                }
+              }
+            }
+            
+            // Reset server error count on successful sync
+            serverErrorCount = 0;
+          }
+        })
+        .catch(error => {
+          handleServerError(error, 'syncing time with server');
+          // Don't interrupt the test flow, just continue with local time
+        });
       }
       
       // Next and previous button handlers
@@ -905,7 +1152,7 @@
         });
       });
       
-      // Save answers to local storage
+      // Save answers to local storage and server
       function saveAnswers() {
         const answers = {};
         
@@ -941,7 +1188,73 @@
           }
         });
         
+        // Save to localStorage as backup
         localStorage.setItem(`${STORAGE_PREFIX}answers`, JSON.stringify(answers));
+        
+        // Get fresh CSRF token
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        
+        // Convert to array if empty for Laravel validation
+        const submittableAnswers = Object.keys(answers).length > 0 ? answers : [];
+        
+        // Save to server untuk persistensi
+        fetch('{{ route('post-test.save-answers') }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': csrfToken,
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            answers: submittableAnswers,
+            language: '{{ $language ?? "id" }}'
+          })
+        })
+        .then(response => {
+          // Check if response is JSON
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            return response.json();
+          } else {
+            // If not JSON, session might have expired - refresh CSRF token
+            return refreshCsrfToken().then(() => {
+              throw new Error('Session might have expired, CSRF token refreshed');
+            });
+          }
+        })
+        .then(data => {
+          console.log('Answers saved to server successfully');
+          serverErrorCount = 0; // Reset error count on success
+        })
+        .catch(error => {
+          handleServerError(error, 'saving answers');
+          // Don't alert the user, just keep the answers in localStorage as backup
+        });
+      }
+      
+      // Function to refresh CSRF token
+      function refreshCsrfToken() {
+        return fetch('{{ route('refresh-csrf-token') }}', {
+          headers: {
+            'Accept': 'application/json'
+          }
+        })
+          .then(response => response.json())
+          .then(data => {
+            if (data.token) {
+              // Update all CSRF tokens in the page
+              document.querySelectorAll('meta[name="csrf-token"]').forEach(meta => {
+                meta.setAttribute('content', data.token);
+              });
+              document.querySelectorAll('input[name="_token"]').forEach(input => {
+                input.value = data.token;
+              });
+              console.log('CSRF token refreshed');
+            }
+          })
+          .catch(error => {
+            console.error('Failed to refresh CSRF token:', error);
+          });
       }
       
       // Submit test
@@ -975,76 +1288,146 @@
         // Reset test state completely but keep fullscreen
         resetTestStateKeepFullscreen();
         
-        // Submit answers via AJAX
-        fetch('{{ route("post-test.evaluate") }}', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-          },
-          body: JSON.stringify({ 
-            answers: answers,
-            language: '{{ $language ?? "id" }}' // Use language from view
-          })
-        })
-        .then(response => response.json())
-        .then(data => {
+        // Get fresh CSRF token
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        
+        // Check if answers is empty
+        const hasAnswers = Object.keys(answers).length > 0;
+        if (!hasAnswers) {
+          // Show warning for empty submission
           loadingContainer.classList.add('d-none');
           resultContainer.classList.remove('d-none');
           
-          // Force scroll to top to ensure results are visible
-          window.scrollTo(0, 0);
-          document.body.scrollTop = 0;
-          document.documentElement.scrollTop = 0;
-          
-          // Display result
           const resultAlert = document.getElementById('result-alert');
           const resultMessage = document.getElementById('result-message');
           
-          // Clear previous classes
-          resultAlert.className = 'alert';
+          resultAlert.className = 'alert alert-warning';
+          resultMessage.textContent = 'Anda belum menjawab pertanyaan apapun. Silakan coba lagi.';
+          retryButton.classList.remove('d-none');
           
-          if (data.passed) {
-            resultAlert.classList.add('alert-success');
-            resultMessage.textContent = 'Selamat! Anda lulus post-test ini.';
-            
-            if (data.level_up) {
-              resultMessage.textContent += ' Anda telah naik ke level berikutnya!';
-              
-              // Redirect to dashboard after 3 seconds to show the updated level
-              setTimeout(() => {
-                window.location.href = '{{ route("dashboard") }}?from_post_test=true&level_up=true';
-              }, 3000);
+          document.getElementById('result-score').textContent = '0';
+          document.getElementById('result-total-points').textContent = '{{ count($questions) }}';
+          document.getElementById('result-percentage').textContent = '0';
+          document.getElementById('result-correct-count').textContent = '0';
+          document.getElementById('result-total-questions').textContent = '{{ count($questions) }}';
+          
+          document.getElementById('score-progress').style.width = '0%';
+          document.getElementById('correct-progress').style.width = '0%';
+          
+          return;
+        }
+        
+        // Submit answers via AJAX with retry mechanism
+        function attemptSubmit(retryCount = 0) {
+          const submittableAnswers = Object.keys(answers).length > 0 ? answers : [];
+          
+          fetch('{{ route("post-test.evaluate") }}', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({ 
+              answers: submittableAnswers, // Use an array if empty
+              language: '{{ $language ?? "id" }}' // Use language from view
+            })
+          })
+          .then(response => {
+            // Check if response is JSON
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+              return response.json();
+            } else {
+              // If not JSON, session might have expired - refresh CSRF token and retry
+              return refreshCsrfToken().then(() => {
+                throw new Error('Session expired, CSRF token refreshed');
+              });
             }
-          } else {
-            resultAlert.classList.add('alert-danger');
-            resultMessage.textContent = 'Maaf, Anda belum lulus post-test ini. Anda perlu mendapatkan minimal 70%.';
-            retryButton.classList.remove('d-none');
-          }
-          
-          document.getElementById('result-score').textContent = data.score;
-          document.getElementById('result-total-points').textContent = data.total_points;
-          document.getElementById('result-percentage').textContent = data.percentage;
-          document.getElementById('result-correct-count').textContent = data.correct_count;
-          document.getElementById('result-total-questions').textContent = data.total_questions;
-          
-          // Update progress bars
-          const scorePercentage = data.total_points > 0 ? (data.score / data.total_points) * 100 : 0;
-          const correctPercentage = data.total_questions > 0 ? (data.correct_count / data.total_questions) * 100 : 0;
-          
-          document.getElementById('score-progress').style.width = `${scorePercentage}%`;
-          document.getElementById('correct-progress').style.width = `${correctPercentage}%`;
-          
-          // Make sure result container is fully visible within fullscreen mode
-          resultContainer.style.display = 'block';
-          resultContainer.scrollIntoView({ behavior: 'auto', block: 'start' });
-        })
-        .catch(error => {
-          console.error('Error submitting test:', error);
-          loadingContainer.classList.add('d-none');
-          questionsContainer.classList.remove('d-none');
-          alert('Terjadi kesalahan saat mengirim data. Silakan coba lagi.');
-        });
+          })
+          .then(data => {
+            loadingContainer.classList.add('d-none');
+            resultContainer.classList.remove('d-none');
+            
+            // Force scroll to top to ensure results are visible
+            window.scrollTo(0, 0);
+            document.body.scrollTop = 0;
+            document.documentElement.scrollTop = 0;
+            
+            // Display result
+            const resultAlert = document.getElementById('result-alert');
+            const resultMessage = document.getElementById('result-message');
+            
+            // Clear previous classes
+            resultAlert.className = 'alert';
+            
+            if (data.passed) {
+              resultAlert.classList.add('alert-success');
+              resultMessage.textContent = 'Selamat! Anda lulus post-test ini.';
+              
+              if (data.level_up) {
+                resultMessage.textContent += ' Anda telah naik ke level berikutnya!';
+                
+                // Redirect to dashboard after 3 seconds to show the updated level
+                setTimeout(() => {
+                  window.location.href = '{{ route("dashboard") }}?from_post_test=true&level_up=true';
+                }, 3000);
+              }
+            } else {
+              resultAlert.classList.add('alert-danger');
+              resultMessage.textContent = 'Maaf, Anda belum lulus post-test ini. Anda perlu mendapatkan minimal 70%.';
+              retryButton.classList.remove('d-none');
+            }
+            
+            document.getElementById('result-score').textContent = data.score;
+            document.getElementById('result-total-points').textContent = data.total_points;
+            document.getElementById('result-percentage').textContent = data.percentage;
+            document.getElementById('result-correct-count').textContent = data.correct_count;
+            document.getElementById('result-total-questions').textContent = data.total_questions;
+            
+            // Update progress bars
+            const scorePercentage = data.total_points > 0 ? (data.score / data.total_points) * 100 : 0;
+            const correctPercentage = data.total_questions > 0 ? (data.correct_count / data.total_questions) * 100 : 0;
+            
+            document.getElementById('score-progress').style.width = `${scorePercentage}%`;
+            document.getElementById('correct-progress').style.width = `${correctPercentage}%`;
+            
+            // Make sure result container is fully visible within fullscreen mode
+            resultContainer.style.display = 'block';
+            resultContainer.scrollIntoView({ behavior: 'auto', block: 'start' });
+          })
+          .catch(error => {
+            console.error('Error submitting test:', error);
+            
+            // Retry logic
+            if (retryCount < 2) {
+              console.log(`Retrying submission (${retryCount + 1}/2)...`);
+              setTimeout(() => attemptSubmit(retryCount + 1), 1000);
+            } else {
+              // After all retries failed, use local fallback
+              loadingContainer.classList.add('d-none');
+              resultContainer.classList.remove('d-none');
+              
+              const resultAlert = document.getElementById('result-alert');
+              const resultMessage = document.getElementById('result-message');
+              
+              resultAlert.className = 'alert alert-warning';
+              resultMessage.textContent = 'Terjadi kesalahan koneksi ke server. Jawaban Anda telah disimpan secara lokal.';
+              
+              // Show basic result with what we know locally
+              document.getElementById('result-score').textContent = 'N/A';
+              document.getElementById('result-total-points').textContent = '{{ count($questions) }}';
+              document.getElementById('result-percentage').textContent = 'N/A';
+              document.getElementById('result-correct-count').textContent = 'N/A';
+              document.getElementById('result-total-questions').textContent = '{{ count($questions) }}';
+              
+              retryButton.classList.remove('d-none');
+            }
+          });
+        }
+        
+        // Start submission process
+        attemptSubmit();
       }
       
       // Keep only fullscreen mode active, remove other anti-cheating measures
@@ -1079,6 +1462,44 @@
           warningOverlay.parentNode.removeChild(warningOverlay);
           warningOverlay = null;
         }
+        
+        // Get fresh CSRF token
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        
+        // Juga reset data jawaban di server
+        // Force clear parameter prevents redirect
+        fetch('{{ route('post-test.save-answers') }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': csrfToken,
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            answers: [], // Make sure it's an array for Laravel validation
+            language: '{{ $language ?? "id" }}',
+            force_clear: true
+          })
+        })
+        .then(response => {
+          // Check if response is JSON
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            return response.json();
+          } else {
+            // If not JSON, just log it but don't try to refresh token here
+            console.log('Non-JSON response when clearing answers');
+            return { success: false };
+          }
+        })
+        .then(data => {
+          console.log('Answers cleared on server while keeping fullscreen');
+          serverErrorCount = 0; // Reset error count on success
+        })
+        .catch(error => {
+          handleServerError(error, 'clearing answers on server');
+          // No need to alert user or retry here
+        });
       }
       
       // Restore saved answers

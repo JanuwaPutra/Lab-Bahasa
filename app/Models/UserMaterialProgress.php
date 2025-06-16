@@ -25,14 +25,14 @@ class UserMaterialProgress extends Model
         'user_id',
         'learning_material_id',
         'completed',
+        'completed_at',
+        'quiz_attempts',
         'quiz_passed',
         'quiz_score',
-        'quiz_attempts',
-        'last_quiz_attempt',
-        'completed_at',
-        'passed_at',
         'quiz_answers',
-        'notes',
+        'temp_answers',
+        'quiz_start_time',
+        'quiz_end_time',
     ];
 
     /**
@@ -42,14 +42,14 @@ class UserMaterialProgress extends Model
      */
     protected $casts = [
         'completed' => 'boolean',
+        'completed_at' => 'datetime',
         'quiz_passed' => 'boolean',
         'quiz_score' => 'integer',
         'quiz_attempts' => 'integer',
-        'completed_at' => 'datetime',
-        'passed_at' => 'datetime',
-        'last_quiz_attempt' => 'datetime',
         'quiz_answers' => 'json',
-        'notes' => 'json',
+        'temp_answers' => 'json',
+        'quiz_start_time' => 'datetime',
+        'quiz_end_time' => 'datetime',
     ];
 
     /**
