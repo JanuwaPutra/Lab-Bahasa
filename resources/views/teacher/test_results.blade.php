@@ -1,5 +1,46 @@
 <x-app-layout>
     <div class="container">
+        @if(Auth::user()->role === 'teacher' && isset($teacherLanguageSettings) && is_countable($teacherLanguageSettings) && count($teacherLanguageSettings) > 0)
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0">Pengaturan Bahasa & Level Anda</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Anda hanya dapat melihat hasil test siswa dengan bahasa dan level yang sesuai dengan pengaturan Anda.
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Bahasa</th>
+                                        <th>Level</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($teacherLanguageSettings as $setting)
+                                    <tr>
+                                        <td>{{ $setting['language'] }}</td>
+                                        <td>
+                                            <span class="badge rounded-pill bg-primary">
+                                                {{ $setting['level'] }} - {{ $setting['level_name'] }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        @endif
+        
         <div class="row mb-4">
             <div class="col-md-12">
                 <div class="card shadow-sm">
@@ -50,10 +91,24 @@
                                                 {{ $result->user->name }}
                                             </a>
                                         </td>
-                                        <td>{{ $result->language === 'en' ? 'English' : 'Bahasa Indonesia' }}</td>
+                                        <td>
+                                            @php
+                                                $languageNames = [
+                                                    'id' => 'Bahasa Indonesia',
+                                                    'en' => 'English',
+                                                    'ru' => 'Russian'
+                                                ];
+                                                $languageName = $languageNames[$result->language] ?? $result->language;
+                                            @endphp
+                                            {{ $languageName }}
+                                        </td>
                                         <td>{{ $result->score }} dari {{ $result->total_points ?? 100 }} ({{ $result->percentage }}%)</td>
                                         <td>
-                                            <span class="badge rounded-pill bg-primary">{{ $result->level }}</span>
+                                            @php
+                                                $levelNames = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                                                $levelName = $levelNames[$result->level] ?? '';
+                                            @endphp
+                                            <span class="badge rounded-pill bg-primary">{{ $result->level }} - {{ $levelName }}</span>
                                         </td>
                                         <td>
                                             <a href="{{ route('teacher.test.result.detail', $result->id) }}" class="btn btn-sm btn-primary">

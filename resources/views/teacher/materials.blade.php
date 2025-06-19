@@ -1,5 +1,46 @@
 <x-app-layout>
   <div class="container mt-4">
+    @if(Auth::user()->role === 'teacher' && isset($teacherLanguageSettings) && is_countable($teacherLanguageSettings) && count($teacherLanguageSettings) > 0)
+    <div class="row mb-4">
+      <div class="col-md-12">
+        <div class="card shadow-sm">
+          <div class="card-header bg-info text-white">
+            <h5 class="mb-0">Pengaturan Bahasa & Level Anda</h5>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info">
+              <i class="fas fa-info-circle me-2"></i>
+              Anda hanya dapat melihat dan mengelola materi pembelajaran dengan bahasa dan level yang sesuai dengan pengaturan Anda.
+            </div>
+            
+            <div class="table-responsive">
+              <table class="table table-bordered">
+                <thead class="table-light">
+                  <tr>
+                    <th>Bahasa</th>
+                    <th>Level</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @foreach($teacherLanguageSettings as $setting)
+                  <tr>
+                    <td>{{ $setting['language'] }}</td>
+                    <td>
+                      <span class="badge rounded-pill bg-primary">
+                        {{ $setting['level'] }} - {{ $setting['level_name'] }}
+                      </span>
+                    </td>
+                  </tr>
+                  @endforeach
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    @endif
+    
     <div class="row mb-4">
       <div class="col-md-12">
         <div class="d-flex justify-content-between align-items-center">
@@ -34,6 +75,7 @@
                 <select name="language" id="language" class="form-select" onchange="this.form.submit()">
                   <option value="id" {{ $language == 'id' ? 'selected' : '' }}>Indonesia</option>
                   <option value="en" {{ $language == 'en' ? 'selected' : '' }}>English</option>
+                  <option value="ru" {{ $language == 'ru' ? 'selected' : '' }}>Russian</option>
                 </select>
               </div>
               
@@ -97,16 +139,25 @@
                       @endif
                     </td>
                     <td>
+                      @php
+                        $levelNames = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                        $levelName = $levelNames[$material->level] ?? '';
+                      @endphp
                       <span class="badge rounded-pill bg-{{ $material->level == 1 ? 'success' : ($material->level == 2 ? 'warning' : 'danger') }}">
-                        Level {{ $material->level }}
+                        Level {{ $material->level }} ({{ $levelName }})
                       </span>
                     </td>
                     <td>
-                      @if($material->language == 'id')
-                        <span class="badge bg-danger">Indonesia</span>
-                      @elseif($material->language == 'en')
-                        <span class="badge bg-primary">English</span>
-                      @endif
+                      @php
+                        $languageNames = [
+                          'id' => 'Indonesia',
+                          'en' => 'English',
+                          'ru' => 'Russian'
+                        ];
+                        $languageName = $languageNames[$material->language] ?? $material->language;
+                        $bgColor = $material->language == 'id' ? 'danger' : ($material->language == 'en' ? 'primary' : 'secondary');
+                      @endphp
+                      <span class="badge bg-{{ $bgColor }}">{{ $languageName }}</span>
                     </td>
                     <td>{{ $material->order }}</td>
                     <td>

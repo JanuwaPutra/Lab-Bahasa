@@ -6,6 +6,7 @@ use App\Models\Assessment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class AssessmentController extends Controller
 {
@@ -126,292 +127,396 @@ class AssessmentController extends Controller
      */
     public function evaluatePretest(Request $request)
     {
-        $request->validate([
-            'answers' => 'required|array',
-            'language' => 'required|string|in:id,en,ru',
-        ]);
-
-        $answers = $request->input('answers');
-        $language = $request->input('language');
-        $cheatingDetected = $request->input('cheating_detected', false);
-        
-        // Get questions from database
-        $questions = \App\Models\Question::active()
-            ->byAssessmentType('pretest')
-            ->byLanguage($language)
-            ->get();
+        try {
+            // First check if this is an empty submission
+            $emptySubmission = $request->input('empty_submission', false);
+            $timeExpired = $request->input('time_expired', false);
             
-        // Initialize score variables
-        $score = 0;
-        $correctCount = 0;
-        $maxPossibleScore = 0;
-        $totalQuestions = $questions->count();
-        
-        // Build detailed results
-        $details = [];
-        
-        // If cheating detected, skip evaluation and set score to 0
-        if ($cheatingDetected) {
-            $percentage = 0;
-            $level = 1;
-            $passed = false;
-        } else {
-            foreach ($questions as $question) {
-                $questionId = $question->id;
-                $questionMaxScore = $question->points; // Default max score for the question
-                
-                // For multiple choice and true/false questions with option scores,
-                // calculate the maximum possible score from the option scores
-                if (($question->type == 'multiple_choice' || $question->type == 'true_false') && 
-                    isset($question->option_scores) && !empty($question->option_scores)) {
-                    // Find the highest score among options
-                    $maxOptionScore = max($question->option_scores);
-                    
-                    // Make sure correct answer has at least 1 point for max score calculation
-                    if ($question->type == 'multiple_choice') {
-                        $correctAnswerScore = isset($question->option_scores[(int)$question->correct_answer]) ? 
-                            (int)$question->option_scores[(int)$question->correct_answer] : 0;
-                        if ($correctAnswerScore == 0) {
-                            // If correct answer has 0 points, we need to add 1 to max possible score
-                            $maxOptionScore = max($maxOptionScore, 1);
-                        }
-                    } else if ($question->type == 'true_false') {
-                        $correctAnswerIndex = $question->correct_answer == 'true' ? 0 : 1;
-                        $correctAnswerScore = isset($question->option_scores[$correctAnswerIndex]) ? 
-                            (int)$question->option_scores[$correctAnswerIndex] : 0;
-                        if ($correctAnswerScore == 0) {
-                            // If correct answer has 0 points, we need to add 1 to max possible score
-                            $maxOptionScore = max($maxOptionScore, 1);
-                        }
-                    }
-                    
-                    if ($maxOptionScore > 0) {
-                        $questionMaxScore = $maxOptionScore;
-                    }
-                }
-                
-                // Add this question's max score to the total max possible score
-                $maxPossibleScore += $questionMaxScore;
-                
-                // Skip if no answer provided
-                if (!isset($answers[$questionId])) {
-                    continue;
-                }
-                
-                $userAnswer = $answers[$questionId];
-                $isCorrect = false;
-                $pointsEarned = 0;
-                
-                // Check if answer is correct based on question type
-                if ($question->type == 'multiple_choice') {
-                    // For multiple choice, convert user answer to integer for comparison
-                    $userAnswerInt = (int)$userAnswer;
-                    $isCorrect = $userAnswerInt === (int)$question->correct_answer;
-                    
-                    // Use option_scores if available, otherwise use default points
-                    if (isset($question->option_scores) && !empty($question->option_scores) && isset($question->option_scores[$userAnswerInt])) {
-                        $pointsEarned = (int)$question->option_scores[$userAnswerInt];
-                        
-                        // If answer is correct but score is 0, give at least 1 point
-                        if ($isCorrect && $pointsEarned == 0) {
-                            $pointsEarned = 1;
-                        }
-                        
-                        // Ensure points are never negative
-                        $pointsEarned = max(0, $pointsEarned);
-                    } else {
-                        $pointsEarned = $isCorrect ? $question->points : 0;
-                    }
-                    
-                    // Add points to the score regardless of whether the answer is "correct"
-                    $score += $pointsEarned;
-                    
-                    // Only count as correct for the correct_count if the actual answer is correct
-                    // Even if the score for the correct answer is 0, it should still count as correct
-                    if ($isCorrect) {
-                        $correctCount++;
-                    }
-                    
-                    // Debug logging
-                    \Log::info('Multiple choice answer check', [
-                        'question_id' => $questionId,
-                        'question_text' => $question->text,
-                        'user_answer' => $userAnswer,
-                        'user_answer_int' => $userAnswerInt,
-                        'correct_answer' => $question->correct_answer,
-                        'correct_answer_int' => (int)$question->correct_answer,
-                        'is_correct' => $isCorrect,
-                        'option_scores' => $question->option_scores,
-                        'points_earned' => $pointsEarned,
-                        'options' => $question->options
-                    ]);
-                } elseif ($question->type == 'true_false') {
-                    $isCorrect = $userAnswer == $question->correct_answer;
-                    
-                    // Use option_scores if available, otherwise use default points
-                    if (isset($question->option_scores) && !empty($question->option_scores)) {
-                        $scoreIndex = $userAnswer == 'true' ? 0 : 1;
-                        $pointsEarned = isset($question->option_scores[$scoreIndex]) ? (int)$question->option_scores[$scoreIndex] : 0;
-                        
-                        // If answer is correct but score is 0, give at least 1 point
-                        if ($isCorrect && $pointsEarned == 0) {
-                            $pointsEarned = 1;
-                        }
-                        
-                        // Ensure points are never negative
-                        $pointsEarned = max(0, $pointsEarned);
-                    } else {
-                        $pointsEarned = $isCorrect ? $question->points : 0;
-                    }
-                    
-                    // Add points to the score
-                    $score += $pointsEarned;
-                    
-                    // Count as correct even if the score is 0
-                    if ($isCorrect) {
-                        $correctCount++;
-                    }
-                    
-                    // Debug logging
-                    \Log::info('True/False answer check', [
-                        'question_id' => $questionId,
-                        'question_text' => $question->text,
-                        'user_answer' => $userAnswer,
-                        'correct_answer' => $question->correct_answer,
-                        'is_correct' => $isCorrect,
-                        'option_scores' => $question->option_scores,
-                        'points_earned' => $pointsEarned
-                    ]);
-                } elseif ($question->type == 'fill_blank') {
-                    $isCorrect = $userAnswer == $question->correct_answer;
-                    
-                    if ($isCorrect) {
-                        $score += $question->points;
-                        $correctCount++;
-                        $pointsEarned = $question->points;
-                    }
-                    
-                    // Debug logging
-                    \Log::info('Fill Blank answer check', [
-                        'question_id' => $questionId,
-                        'question_text' => $question->text,
-                        'user_answer' => $userAnswer,
-                        'correct_answer' => $question->correct_answer,
-                        'is_correct' => $isCorrect
-                    ]);
-                } elseif ($question->type == 'essay') {
-                    // For essay, just check if word count meets minimum requirement
-                    $wordCount = str_word_count($userAnswer);
-                    $isCorrect = $wordCount >= $question->min_words;
-                    
-                    if ($isCorrect) {
-                        $score += $question->points;
-                        $correctCount++;
-                        $pointsEarned = $question->points;
-                    }
-                    
-                    // Debug logging
-                    \Log::info('Essay answer check', [
-                        'question_id' => $questionId,
-                        'question_text' => $question->text,
-                        'user_answer' => $userAnswer,
-                        'word_count' => $wordCount,
-                        'min_words' => $question->min_words,
-                        'is_correct' => $isCorrect
-                    ]);
-                }
-                
-                // Add to details
-                $details[] = [
-                    'question_id' => $questionId,
-                    'question' => $question->text,
-                    'user_answer' => $userAnswer,
-                    'correct_answer' => $question->correct_answer,
-                    'is_correct' => $isCorrect,
-                    'type' => $question->type,
-                    'points_earned' => $pointsEarned ?? ($isCorrect ? $question->points : 0)
-                ];
-            }
+            // Log all incoming data for debugging
+            \Log::info('Pretest evaluation raw request', [
+                'all_data' => $request->all(),
+                'empty_submission' => $emptySubmission,
+                'time_expired' => $timeExpired
+            ]);
             
-            // Calculate percentage based on maximum possible score
-            // Ensure we don't divide by zero
-            $percentage = $maxPossibleScore > 0 ? ($score / $maxPossibleScore) * 100 : 0;
-            $percentage = round($percentage, 2);
-            
-            // Clamp percentage to 0-100 range
-            $percentage = max(0, min(100, $percentage));
-            
-            // Ensure score is never negative
-            $score = max(0, $score);
-            
-            // Determine level based on percentage
-            $level = 1;
-            if ($percentage >= 80) {
-                $level = 3; // Advanced
-            } elseif ($percentage >= 60) {
-                $level = 2; // Intermediate
+            // Different validation rules based on submission type
+            if ($emptySubmission) {
+                $validator = \Validator::make($request->all(), [
+                    'language' => 'required|string|in:id,en,ru',
+                    'empty_submission' => 'boolean',
+                    'time_expired' => 'boolean'
+                ]);
             } else {
-                $level = 1; // Beginner
+                $validator = \Validator::make($request->all(), [
+                    'answers' => 'required|array',
+                    'language' => 'required|string|in:id,en,ru',
+                ]);
             }
             
-            $passed = $percentage >= 70;
-        }
-        
-        // Log all the calculation results
-        \Log::info('Pretest calculation summary', [
-            'score' => $score,
-            'maxPossibleScore' => $maxPossibleScore,
-            'percentage' => $percentage,
-            'correctCount' => $correctCount,
-            'totalQuestions' => $totalQuestions,
-            'level' => $level,
-            'passed' => $passed
-        ]);
-        
-        // Save assessment to database
-        $assessment = Assessment::create([
-            'user_id' => Auth::id(),
-            'type' => 'pretest',
-            'level' => $level,
-            'score' => $score,
-            'total_points' => $maxPossibleScore,
-            'percentage' => $percentage,
-            'passed' => $passed,
-            'answers' => $answers,
-            'language' => $language,
-            'correct_count' => $correctCount,
-            'total_questions' => $questions->count(),
-            'time_limit' => \App\Models\TestSettings::getTimeLimit('pretest', $language) ?: 30,
-            'details' => $details
-        ]);
-        
-        // Debug logging
-        \Log::info('Pretest assessment created', [
-            'user_id' => Auth::id(),
-            'assessment_id' => $assessment->id,
-            'type' => 'pretest',
-            'level' => $level,
-            'score' => $score,
-            'percentage' => $percentage,
-            'passed' => $passed,
-            'language' => $language
-        ]);
+            if ($validator->fails()) {
+                \Log::error('Pretest validation failed', [
+                    'errors' => $validator->errors()->toArray(),
+                    'request_data' => $request->all()
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
 
-        // Return the result
-        return response()->json([
-            'level' => $level,
-            'score' => $score,
-            'total_points' => $maxPossibleScore,
-            'percentage' => $percentage,
-            'passed' => $passed,
-            'correct_count' => $correctCount,
-            'total_questions' => $questions->count(),
-            'language' => $language
-        ]);
+            $answers = $request->input('answers', []);
+            $language = $request->input('language');
+            $cheatingDetected = $request->input('cheating_detected', false);
+            
+            // Log the processed request data
+            \Log::info('Pretest evaluation request processed', [
+                'answers' => $answers,
+                'language' => $language,
+                'empty_submission' => $emptySubmission,
+                'time_expired' => $timeExpired,
+                'answer_count' => is_array($answers) ? count($answers) : 0
+            ]);
+            
+            // Get questions from database
+            $questions = \App\Models\Question::active()
+                ->byAssessmentType('pretest')
+                ->byLanguage($language)
+                ->get();
+            
+            // Initialize score variables
+            $score = 0;
+            $correctCount = 0;
+            $maxPossibleScore = 0;
+            $totalQuestions = $questions->count();
+            
+            // Build detailed results
+            $details = [];
+            
+            // If cheating detected or empty submission with time expired, skip evaluation and set score to 0
+            if ($cheatingDetected || $emptySubmission) {
+                $percentage = 0;
+                $level = 1;
+                $passed = false;
+                
+                \Log::info('Skipping evaluation due to ' . 
+                    ($cheatingDetected ? 'cheating detection' : 'empty submission'));
+            } else {
+                foreach ($questions as $question) {
+                    $questionId = $question->id;
+                    $questionMaxScore = $question->points; // Default max score for the question
+                    
+                    // For multiple choice and true/false questions with option scores,
+                    // calculate the maximum possible score from the option scores
+                    if (($question->type == 'multiple_choice' || $question->type == 'true_false') && 
+                        isset($question->option_scores) && !empty($question->option_scores)) {
+                        // Find the highest score among options
+                        $maxOptionScore = max($question->option_scores);
+                        
+                        // Make sure correct answer has at least 1 point for max score calculation
+                        if ($question->type == 'multiple_choice') {
+                            $correctAnswerScore = isset($question->option_scores[(int)$question->correct_answer]) ? 
+                                (int)$question->option_scores[(int)$question->correct_answer] : 0;
+                            if ($correctAnswerScore == 0) {
+                                // If correct answer has 0 points, we need to add 1 to max possible score
+                                $maxOptionScore = max($maxOptionScore, 1);
+                            }
+                        } else if ($question->type == 'true_false') {
+                            $correctAnswerIndex = $question->correct_answer == 'true' ? 0 : 1;
+                            $correctAnswerScore = isset($question->option_scores[$correctAnswerIndex]) ? 
+                                (int)$question->option_scores[$correctAnswerIndex] : 0;
+                            if ($correctAnswerScore == 0) {
+                                // If correct answer has 0 points, we need to add 1 to max possible score
+                                $maxOptionScore = max($maxOptionScore, 1);
+                            }
+                        }
+                        
+                        if ($maxOptionScore > 0) {
+                            $questionMaxScore = $maxOptionScore;
+                        }
+                    }
+                    
+                    // Add this question's max score to the total max possible score
+                    $maxPossibleScore += $questionMaxScore;
+                    
+                    // Skip if no answer provided
+                    if (!isset($answers[$questionId])) {
+                        continue;
+                    }
+                    
+                    $userAnswer = $answers[$questionId];
+                    $isCorrect = false;
+                    $pointsEarned = 0;
+                    
+                    // Check if answer is correct based on question type
+                    if ($question->type == 'multiple_choice') {
+                        // For multiple choice, convert user answer to integer for comparison
+                        $userAnswerInt = (int)$userAnswer;
+                        $isCorrect = $userAnswerInt === (int)$question->correct_answer;
+                        
+                        // Use option_scores if available, otherwise use default points
+                        if (isset($question->option_scores) && !empty($question->option_scores) && isset($question->option_scores[$userAnswerInt])) {
+                            $pointsEarned = (int)$question->option_scores[$userAnswerInt];
+                            
+                            // If answer is correct but score is 0, give at least 1 point
+                            if ($isCorrect && $pointsEarned == 0) {
+                                $pointsEarned = 1;
+                            }
+                            
+                            // Ensure points are never negative
+                            $pointsEarned = max(0, $pointsEarned);
+                        } else {
+                            $pointsEarned = $isCorrect ? $question->points : 0;
+                        }
+                        
+                        // Add points to the score regardless of whether the answer is "correct"
+                        $score += $pointsEarned;
+                        
+                        // Only count as correct for the correct_count if the actual answer is correct
+                        // Even if the score for the correct answer is 0, it should still count as correct
+                        if ($isCorrect) {
+                            $correctCount++;
+                        }
+                        
+                        // Debug logging
+                        \Log::info('Multiple choice answer check', [
+                            'question_id' => $questionId,
+                            'question_text' => $question->text,
+                            'user_answer' => $userAnswer,
+                            'user_answer_int' => $userAnswerInt,
+                            'correct_answer' => $question->correct_answer,
+                            'correct_answer_int' => (int)$question->correct_answer,
+                            'is_correct' => $isCorrect,
+                            'option_scores' => $question->option_scores,
+                            'points_earned' => $pointsEarned,
+                            'options' => $question->options
+                        ]);
+                    } elseif ($question->type == 'true_false') {
+                        $isCorrect = $userAnswer == $question->correct_answer;
+                        
+                        // Use option_scores if available, otherwise use default points
+                        if (isset($question->option_scores) && !empty($question->option_scores)) {
+                            $scoreIndex = $userAnswer == 'true' ? 0 : 1;
+                            $pointsEarned = isset($question->option_scores[$scoreIndex]) ? (int)$question->option_scores[$scoreIndex] : 0;
+                            
+                            // If answer is correct but score is 0, give at least 1 point
+                            if ($isCorrect && $pointsEarned == 0) {
+                                $pointsEarned = 1;
+                            }
+                            
+                            // Ensure points are never negative
+                            $pointsEarned = max(0, $pointsEarned);
+                        } else {
+                            $pointsEarned = $isCorrect ? $question->points : 0;
+                        }
+                        
+                        // Add points to the score
+                        $score += $pointsEarned;
+                        
+                        // Count as correct even if the score is 0
+                        if ($isCorrect) {
+                            $correctCount++;
+                        }
+                        
+                        // Debug logging
+                        \Log::info('True/False answer check', [
+                            'question_id' => $questionId,
+                            'question_text' => $question->text,
+                            'user_answer' => $userAnswer,
+                            'correct_answer' => $question->correct_answer,
+                            'is_correct' => $isCorrect,
+                            'option_scores' => $question->option_scores,
+                            'points_earned' => $pointsEarned
+                        ]);
+                    } elseif ($question->type == 'fill_blank') {
+                        $isCorrect = $userAnswer == $question->correct_answer;
+                        
+                        if ($isCorrect) {
+                            $score += $question->points;
+                            $correctCount++;
+                            $pointsEarned = $question->points;
+                        }
+                        
+                        // Debug logging
+                        \Log::info('Fill Blank answer check', [
+                            'question_id' => $questionId,
+                            'question_text' => $question->text,
+                            'user_answer' => $userAnswer,
+                            'correct_answer' => $question->correct_answer,
+                            'is_correct' => $isCorrect
+                        ]);
+                    } elseif ($question->type == 'essay') {
+                        // For essay, just check if word count meets minimum requirement
+                        $wordCount = str_word_count($userAnswer);
+                        $isCorrect = $wordCount >= $question->min_words;
+                        
+                        if ($isCorrect) {
+                            $score += $question->points;
+                            $correctCount++;
+                            $pointsEarned = $question->points;
+                        }
+                        
+                        // Debug logging
+                        \Log::info('Essay answer check', [
+                            'question_id' => $questionId,
+                            'question_text' => $question->text,
+                            'user_answer' => $userAnswer,
+                            'word_count' => $wordCount,
+                            'min_words' => $question->min_words,
+                            'is_correct' => $isCorrect
+                        ]);
+                    }
+                    
+                    // Add to details
+                    $details[] = [
+                        'question_id' => $questionId,
+                        'question' => $question->text,
+                        'user_answer' => $userAnswer,
+                        'correct_answer' => $question->correct_answer,
+                        'is_correct' => $isCorrect,
+                        'type' => $question->type,
+                        'points_earned' => $pointsEarned ?? ($isCorrect ? $question->points : 0)
+                    ];
+                }
+                
+                // Calculate percentage based on maximum possible score
+                // Ensure we don't divide by zero
+                $percentage = $maxPossibleScore > 0 ? ($score / $maxPossibleScore) * 100 : 0;
+                $percentage = round($percentage, 2);
+                
+                // Clamp percentage to 0-100 range
+                $percentage = max(0, min(100, $percentage));
+                
+                // Ensure score is never negative
+                $score = max(0, $score);
+                
+                // Determine level based on percentage
+                $level = 1;
+                if ($percentage >= 80) {
+                    $level = 3; // Advanced
+                } elseif ($percentage >= 60) {
+                    $level = 2; // Intermediate
+                } else {
+                    $level = 1; // Beginner
+                }
+                
+                $passed = $percentage >= 70;
+            }
+            
+            // Log all the calculation results
+            \Log::info('Pretest calculation summary', [
+                'score' => $score,
+                'maxPossibleScore' => $maxPossibleScore,
+                'percentage' => $percentage,
+                'correctCount' => $correctCount,
+                'totalQuestions' => $totalQuestions,
+                'level' => $level,
+                'passed' => $passed
+            ]);
+            
+            // Save assessment to database
+            $assessment = Assessment::create([
+                'user_id' => Auth::id(),
+                'type' => 'pretest',
+                'level' => $level,
+                'score' => $score,
+                'total_points' => $maxPossibleScore,
+                'percentage' => $percentage,
+                'passed' => $passed,
+                'answers' => $answers,
+                'language' => $language,
+                'correct_count' => $correctCount,
+                'total_questions' => $questions->count(),
+                'time_limit' => \App\Models\TestSettings::getTimeLimit('pretest', $language) ?: 30,
+                'details' => $details
+            ]);
+            
+            // Debug logging
+            \Log::info('Pretest assessment created', [
+                'user_id' => Auth::id(),
+                'assessment_id' => $assessment->id,
+                'type' => 'pretest',
+                'level' => $level,
+                'score' => $score,
+                'percentage' => $percentage,
+                'passed' => $passed,
+                'language' => $language
+            ]);
+
+            // Return the result
+            return response()->json([
+                'level' => $level,
+                'score' => $score,
+                'total_points' => $maxPossibleScore,
+                'percentage' => $percentage,
+                'passed' => $passed,
+                'correct_count' => $correctCount,
+                'total_questions' => $questions->count(),
+                'language' => $language
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Pretest evaluation exception', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Server error: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
-     * Show the post-test form
+     * Safely deactivate all active tests for a user, language and level combination
+     * This is a special handler to bypass the unique constraint
+     * 
+     * @param int $userId
+     * @param string $language
+     * @param int $level
+     * @return bool
+     */
+    private function safelyDeactivateActiveTests($userId, $language, $level)
+    {
+        try {
+            // Start a transaction
+            \DB::beginTransaction();
+            
+            // Find all active tests for this user/language/level
+            $activeTests = \DB::select(
+                'SELECT id FROM post_test_progress WHERE user_id = ? AND language = ? AND level = ? AND is_active = 1',
+                [$userId, $language, $level]
+            );
+            
+            // If we have active tests, deactivate them one by one
+            foreach ($activeTests as $test) {
+                \DB::statement('UPDATE post_test_progress SET is_active = 0 WHERE id = ?', [$test->id]);
+            }
+            
+            // Also deactivate ALL tests for this user/language/level as a safety measure
+            // This is to handle the case where the unique constraint is in a weird state
+            \DB::statement(
+                'UPDATE post_test_progress SET is_active = 0 WHERE user_id = ? AND language = ? AND level = ?', 
+                [$userId, $language, $level]
+            );
+            
+            \DB::commit();
+            return true;
+        } catch (\Exception $e) {
+            \DB::rollBack();
+            \Log::error('Failed to safely deactivate tests', [
+                'error' => $e->getMessage(),
+                'user_id' => $userId,
+                'language' => $language,
+                'level' => $level
+            ]);
+            return false;
+        }
+    }
+    
+    /**
+     * Show the post-test view
      *
      * @param string $language The language code (id, en, ru)
      * @return \Illuminate\Contracts\Support\Renderable
@@ -429,33 +534,80 @@ class AssessmentController extends Controller
         // Store the selected language in session
         session(['language' => $language]);
         
-        // Get the user's current level for this language
+        // Check current user level
         $user = auth()->user();
-        $level = $user ? $user->getCurrentLevel($language) : 1;
+        $currentLevel = $user->getCurrentLevel($language) ?? 1;
         
-        // Debug logging
-        \Log::info('Loading post-test', [
-            'user_id' => $user ? $user->id : 'guest',
-            'level' => $level,
-            'language' => $language
+        // IMPORTANT: Check and log all active post-test progress
+        $activeTests = \App\Models\PostTestProgress::where('is_active', true)
+            ->where('completed', false)
+            ->get();
+            
+        \Log::info('DIAGNOSTIC: All active post-tests in the system', [
+            'count' => $activeTests->count(),
+            'records' => $activeTests->map(function($test) {
+                return [
+                    'id' => $test->id,
+                    'user_id' => $test->user_id,
+                    'language' => $test->language,
+                    'level' => $test->level,
+                    'created_at' => $test->created_at,
+                    'updated_at' => $test->updated_at
+                ];
+            })
         ]);
         
-        // Check if user has completed all learning materials before allowing post-test
-        if ($user && !$user->canTakePostTest($language)) {
-            \Log::warning('User attempted to access post-test without completing all materials', [
+        // First ensure all previous tests are deactivated - bypass the Eloquent model
+        $deactivated = $this->safelyDeactivateActiveTests($user->id, $language, $currentLevel);
+        
+        if (!$deactivated) {
+            \Log::warning('Failed to deactivate previous tests, continuing with caution', [
                 'user_id' => $user->id,
-                'level' => $level,
-                'language' => $language
+                'language' => $language, 
+                'level' => $currentLevel
             ]);
-            
-            return redirect()->route('learning.materials')
-                ->with('error', 'Anda harus menyelesaikan semua materi dan kuis pada level ini sebelum mengambil Post Test.');
         }
         
-        // Get language-specific questions for the user's level
+        // Safety measure: Use a transaction and try-catch to handle the unique constraint issue
+        try {
+            \DB::beginTransaction();
+            
+            // Create a new progress record
+            $newProgress = \App\Models\PostTestProgress::create([
+                'user_id' => $user->id,
+                'language' => $language,
+                'level' => $currentLevel,
+                'start_time' => now(),
+                'answers' => [],
+                'completed' => false,
+                'is_active' => true
+            ]);
+            
+            \DB::commit();
+            
+            \Log::info('FORCED new post-test progress record creation on page load', [
+                'progress_id' => $newProgress->id,
+                'user_id' => $user->id,
+                'language' => $language,
+                'level' => $currentLevel
+            ]);
+        } catch (\Exception $e) {
+            \DB::rollBack();
+            
+            \Log::error('Failed to create new post-test progress record', [
+                'error' => $e->getMessage(),
+                'user_id' => $user->id,
+                'language' => $language,
+                'level' => $currentLevel
+            ]);
+            
+            // Continue without creating a new record - we'll try to use an existing one
+        }
+        
+        // Get language-specific questions
         $questions = \App\Models\Question::active()
             ->byAssessmentType('post_test')
-            ->byLevel($level)
+            ->byLevel($currentLevel)
             ->byLanguage($language)
             ->get();
             
@@ -476,7 +628,7 @@ class AssessmentController extends Controller
             $timeLimit = 45;
         }
             
-        return view('assessment.post_test', compact('questions', 'level', 'language', 'languageName', 'timeLimit'));
+        return view('assessment.post_test', compact('questions', 'currentLevel', 'language', 'languageName', 'timeLimit'));
     }
 
     /**
@@ -487,94 +639,90 @@ class AssessmentController extends Controller
      */
     public function evaluatePostTest(Request $request)
     {
-        $request->validate([
-            'answers' => 'required|array',
-            'language' => 'required|string|in:id,en,ru',
-        ]);
-
-        $answers = $request->input('answers');
-        $language = $request->input('language');
-        $cheatingDetected = $request->input('cheating_detected', false);
-        $level = auth()->user()->getCurrentLevel($language) ?? 1;
+        $user = auth()->user();
+        $answers = $request->input('answers', []);
+        $language = $request->input('language', session('language', 'id'));
+        $elapsedTime = $request->input('elapsed_time');
+        $timeExpired = $request->input('time_expired', false);
+        $remainingSeconds = $request->input('remaining_seconds', 0);
         
-        // Debug the incoming data
-        \Log::info('Post-test evaluation request', [
-            'answers' => $answers,
-            'language' => $language,
-            'level' => $level,
-            'request_data' => $request->all()
-        ]);
-        
-        // Get questions from database
-        $questions = \App\Models\Question::active()
-            ->byAssessmentType('post_test')
-            ->byLevel($level)
-            ->byLanguage($language)
-            ->get();
+        try {
+            // Get user's current level
+            $level = $user->getCurrentLevel($language);
             
-        // Debug questions retrieved
-        \Log::info('Post-test questions retrieved', [
-            'question_count' => $questions->count(),
-            'questions' => $questions->map(function($q) {
-                return [
-                    'id' => $q->id,
-                    'text' => $q->text,
-                    'type' => $q->type,
-                    'correct_answer' => $q->correct_answer,
-                    'options' => $q->options,
-                    'option_scores' => $q->option_scores
-                ];
-            })
-        ]);
-        
-        // Initialize score variables
-        $score = 0;
-        $correctCount = 0;
-        $maxPossibleScore = 0;
-        $totalQuestions = $questions->count();
-        
-        // Build detailed results
-        $details = [];
-        
-        // If cheating detected, skip evaluation and set score to 0
-        if ($cheatingDetected) {
-            $percentage = 0;
-            $passed = false;
-            $levelUp = false;
-        } else {
+            \Log::info('Post-test evaluation', [
+                'user_id' => $user->id,
+                'language' => $language,
+                'level' => $level,
+                'answers_count' => count($answers),
+                'elapsed_time' => $elapsedTime,
+                'time_expired' => $timeExpired,
+                'remaining_seconds' => $remainingSeconds
+            ]);
+            
+            // Get active post-test progress
+            $progress = \App\Models\PostTestProgress::getActive($user->id, $language, $level);
+            
+            if (!$progress) {
+                \Log::warning('No active post-test found during evaluation', [
+                    'user_id' => $user->id,
+                    'language' => $language,
+                    'level' => $level
+                ]);
+                
+                // Try to find any incomplete test
+                $progress = \App\Models\PostTestProgress::where('user_id', $user->id)
+                    ->where('language', $language)
+                    ->where('level', $level)
+                    ->where('completed', false)
+                    ->latest()
+                    ->first();
+                    
+                if (!$progress) {
+                    \Log::error('No test found for evaluation, creating new one', [
+                        'user_id' => $user->id,
+                        'language' => $language,
+                        'level' => $level
+                    ]);
+                    
+                    // Create a new one as last resort
+                    $progress = \App\Models\PostTestProgress::create([
+                        'user_id' => $user->id,
+                        'language' => $language,
+                        'level' => $level,
+                        'start_time' => now()->subMinutes(45), // Assume test was 45 min ago
+                        'answers' => $answers,
+                        'is_active' => true,
+                        'completed' => false
+                    ]);
+                }
+            }
+            
+            // Save the answers to the progress record
+            $progress->answers = $answers;
+            $progress->save();
+            
+            // Start a transaction for the evaluation process
+            \DB::beginTransaction();
+            
+            // Evaluate the test scores
+            // Get questions from database
+            $questions = \App\Models\Question::active()
+                ->byAssessmentType('post_test')
+                ->byLevel($level)
+                ->byLanguage($language)
+                ->get();
+                
+            // Initialize score variables
+            $score = 0;
+            $correctCount = 0;
+            $maxPossibleScore = 0;
+            $totalQuestions = $questions->count();
+            
+            // Calculate scores
             foreach ($questions as $question) {
                 $questionId = $question->id;
-                $questionMaxScore = $question->points; // Default max score for the question
-                
-                // For multiple choice and true/false questions with option scores,
-                // calculate the maximum possible score from the option scores
-                if (($question->type == 'multiple_choice' || $question->type == 'true_false') && 
-                    isset($question->option_scores) && !empty($question->option_scores)) {
-                    // Find the highest score among options
-                    $maxOptionScore = max($question->option_scores);
-                    
-                    // Make sure correct answer has at least 1 point for max score calculation
-                    if ($question->type == 'multiple_choice') {
-                        $correctAnswerScore = isset($question->option_scores[(int)$question->correct_answer]) ? 
-                            (int)$question->option_scores[(int)$question->correct_answer] : 0;
-                        if ($correctAnswerScore == 0) {
-                            // If correct answer has 0 points, we need to add 1 to max possible score
-                            $maxOptionScore = max($maxOptionScore, 1);
-                        }
-                    } else if ($question->type == 'true_false') {
-                        $correctAnswerIndex = $question->correct_answer == 'true' ? 0 : 1;
-                        $correctAnswerScore = isset($question->option_scores[$correctAnswerIndex]) ? 
-                            (int)$question->option_scores[$correctAnswerIndex] : 0;
-                        if ($correctAnswerScore == 0) {
-                            // If correct answer has 0 points, we need to add 1 to max possible score
-                            $maxOptionScore = max($maxOptionScore, 1);
-                        }
-                    }
-                    
-                    if ($maxOptionScore > 0) {
-                        $questionMaxScore = $maxOptionScore;
-                    }
-                }
+                $questionMaxScore = $question->points ?? 1; // Default max score for the question
                 
                 // Add this question's max score to the total max possible score
                 $maxPossibleScore += $questionMaxScore;
@@ -586,7 +734,6 @@ class AssessmentController extends Controller
                 
                 $userAnswer = $answers[$questionId];
                 $isCorrect = false;
-                $pointsEarned = 0;
                 
                 // Check if answer is correct based on question type
                 if ($question->type == 'multiple_choice') {
@@ -594,225 +741,141 @@ class AssessmentController extends Controller
                     $userAnswerInt = (int)$userAnswer;
                     $isCorrect = $userAnswerInt === (int)$question->correct_answer;
                     
-                    // Use option_scores if available, otherwise use default points
-                    if (isset($question->option_scores) && !empty($question->option_scores) && isset($question->option_scores[$userAnswerInt])) {
-                        $pointsEarned = (int)$question->option_scores[$userAnswerInt];
-                        
-                        // If answer is correct but score is 0, give at least 1 point
-                        if ($isCorrect && $pointsEarned == 0) {
-                            $pointsEarned = 1;
-                        }
-                        
-                        // Ensure points are never negative
-                        $pointsEarned = max(0, $pointsEarned);
-                    } else {
-                        $pointsEarned = $isCorrect ? $question->points : 0;
-                    }
-                    
-                    // Add points to the score regardless of whether the answer is "correct"
-                    $score += $pointsEarned;
-                    
-                    // Only count as correct for the correct_count if the actual answer is correct
-                    // Even if the score for the correct answer is 0, it should still count as correct
                     if ($isCorrect) {
+                        $score += $questionMaxScore;
                         $correctCount++;
                     }
-                    
-                    // Debug logging
-                    \Log::info('Multiple choice answer check', [
-                        'question_id' => $questionId,
-                        'question_text' => $question->text,
-                        'user_answer' => $userAnswer,
-                        'user_answer_int' => $userAnswerInt,
-                        'correct_answer' => $question->correct_answer,
-                        'correct_answer_int' => (int)$question->correct_answer,
-                        'is_correct' => $isCorrect,
-                        'option_scores' => $question->option_scores,
-                        'points_earned' => $pointsEarned,
-                        'options' => $question->options
-                    ]);
                 } elseif ($question->type == 'true_false') {
                     $isCorrect = $userAnswer == $question->correct_answer;
                     
-                    // Use option_scores if available, otherwise use default points
-                    if (isset($question->option_scores) && !empty($question->option_scores)) {
-                        $scoreIndex = $userAnswer == 'true' ? 0 : 1;
-                        $pointsEarned = isset($question->option_scores[$scoreIndex]) ? (int)$question->option_scores[$scoreIndex] : 0;
-                        
-                        // If answer is correct but score is 0, give at least 1 point
-                        if ($isCorrect && $pointsEarned == 0) {
-                            $pointsEarned = 1;
-                        }
-                        
-                        // Ensure points are never negative
-                        $pointsEarned = max(0, $pointsEarned);
-                    } else {
-                        $pointsEarned = $isCorrect ? $question->points : 0;
-                    }
-                    
-                    // Add points to the score
-                    $score += $pointsEarned;
-                    
-                    // Count as correct even if the score is 0
                     if ($isCorrect) {
+                        $score += $questionMaxScore;
                         $correctCount++;
                     }
-                    
-                    // Debug logging
-                    \Log::info('True/False answer check', [
-                        'question_id' => $questionId,
-                        'question_text' => $question->text,
-                        'user_answer' => $userAnswer,
-                        'correct_answer' => $question->correct_answer,
-                        'is_correct' => $isCorrect,
-                        'option_scores' => $question->option_scores,
-                        'points_earned' => $pointsEarned
-                    ]);
                 } elseif ($question->type == 'fill_blank') {
-                    $isCorrect = $userAnswer == $question->correct_answer;
+                    $isCorrect = strtolower(trim($userAnswer)) == strtolower(trim($question->correct_answer));
                     
                     if ($isCorrect) {
-                        $score += $question->points;
+                        $score += $questionMaxScore;
                         $correctCount++;
-                        $pointsEarned = $question->points;
                     }
-                    
-                    // Debug logging
-                    \Log::info('Fill Blank answer check', [
-                        'question_id' => $questionId,
-                        'question_text' => $question->text,
-                        'user_answer' => $userAnswer,
-                        'correct_answer' => $question->correct_answer,
-                        'is_correct' => $isCorrect
-                    ]);
                 } elseif ($question->type == 'essay') {
                     // For essay, just check if word count meets minimum requirement
                     $wordCount = str_word_count($userAnswer);
-                    $isCorrect = $wordCount >= $question->min_words;
+                    $isCorrect = $wordCount >= ($question->min_words ?? 50);
                     
                     if ($isCorrect) {
-                        $score += $question->points;
+                        $score += $questionMaxScore;
                         $correctCount++;
-                        $pointsEarned = $question->points;
                     }
-                    
-                    // Debug logging
-                    \Log::info('Essay answer check', [
-                        'question_id' => $questionId,
-                        'question_text' => $question->text,
-                        'user_answer' => $userAnswer,
-                        'word_count' => $wordCount,
-                        'min_words' => $question->min_words,
-                        'is_correct' => $isCorrect
-                    ]);
                 }
-                
-                // Add to details
-                $details[] = [
-                    'question_id' => $questionId,
-                    'question' => $question->text,
-                    'user_answer' => $userAnswer,
-                    'correct_answer' => $question->correct_answer,
-                    'is_correct' => $isCorrect,
-                    'type' => $question->type,
-                    'points_earned' => $pointsEarned ?? ($isCorrect ? $question->points : 0)
-                ];
             }
             
             // Calculate percentage based on maximum possible score
-            // Ensure we don't divide by zero
-            $percentage = $maxPossibleScore > 0 ? ($score / $maxPossibleScore) * 100 : 0;
-            $percentage = round($percentage, 2);
+            $percentage = $maxPossibleScore > 0 ? round(($score / $maxPossibleScore) * 100, 2) : 0;
             
-            // Clamp percentage to 0-100 range
-            $percentage = max(0, min(100, $percentage));
-            
+            // Determine if passed (70% or higher)
             $passed = $percentage >= 70;
-            $levelUp = false;
             
-            // If passed and not at max level, level up the user
-            if ($passed && $level < 3 && Auth::check()) {
-                $user = Auth::user();
+            // Level up if passed and not at max level
+            $levelUp = false;
+            if ($passed && $level < 3) {
                 $newLevel = $level + 1;
-                
-                // Debug logging before level change
-                \Log::info('About to level up user', [
-                    'user_id' => $user->id,
-                    'current_level' => $level,
-                    'new_level' => $newLevel,
-                    'language' => $language
-                ]);
-                
-                // Make sure to use the same language parameter
                 $user->setCurrentLevel($newLevel, $language);
-                
-                // Verify level change
-                $updatedLevel = $user->getCurrentLevel($language);
-                \Log::info('After level up', [
-                    'user_id' => $user->id,
-                    'updated_level' => $updatedLevel,
-                    'level_changed' => ($updatedLevel == $newLevel),
-                    'language' => $language
-                ]);
-                
                 $levelUp = true;
             }
+            
+            // Create assessment record
+            $assessment = \App\Models\Assessment::create([
+                'user_id' => $user->id,
+                'type' => 'post_test',
+                'level' => $level,
+                'language' => $language,
+                'score' => $score,
+                'total_points' => $maxPossibleScore,
+                'percentage' => $percentage,
+                'passed' => $passed,
+                'answers' => $answers,
+                'details' => [],
+                'correct_count' => $correctCount,
+                'total_questions' => $totalQuestions
+            ]);
+            
+            // Mark the test as completed using our new method
+            $markSuccess = $progress->markAsCompleted();
+            
+            if (!$markSuccess) {
+                \Log::warning('Failed to mark test as completed using the model method, trying direct DB update', [
+                    'test_id' => $progress->id
+                ]);
+                
+                // Direct DB update as fallback
+                try {
+                    \DB::statement("UPDATE post_test_progress SET is_active = 0 WHERE id = ?", [$progress->id]);
+                    \DB::statement("UPDATE post_test_progress SET completed = 1, completed_at = NOW() WHERE id = ?", [$progress->id]);
+                } catch (\Exception $e) {
+                    \Log::error('Failed direct DB update', [
+                        'error' => $e->getMessage(),
+                        'test_id' => $progress->id
+                    ]);
+                }
+            }
+            
+            // Force delete any remaining active tests
+            try {
+                \DB::statement("
+                    DELETE FROM post_test_progress 
+                    WHERE user_id = ? AND language = ? AND level = ? AND is_active = 1
+                ", [$user->id, $language, $level]);
+            } catch (\Exception $e) {
+                \Log::error('Error trying to force delete remaining active tests', [
+                    'error' => $e->getMessage(),
+                    'user_id' => $user->id
+                ]);
+            }
+            
+            // Commit the transaction
+            \DB::commit();
+            
+            // Return result with scores
+            return response()->json([
+                'success' => true,
+                'message' => 'Post-test evaluation completed successfully',
+                'score' => $score,
+                'total_points' => $maxPossibleScore,
+                'percentage' => $percentage,
+                'passed' => $passed,
+                'level_up' => $levelUp,
+                'correct_count' => $correctCount,
+                'total_questions' => $totalQuestions
+            ]);
+        } catch (\Exception $e) {
+            // Rollback on error
+            if (\DB::transactionLevel() > 0) {
+                \DB::rollBack();
+            }
+            
+            \Log::error('Error completing post-test evaluation', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => $user->id,
+                'language' => $language,
+                'level' => $level
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Error completing post-test evaluation: ' . $e->getMessage(),
+                // Provide default values for UI display
+                'score' => 0,
+                'total_points' => 0,
+                'percentage' => 0,
+                'passed' => false,
+                'level_up' => false,
+                'correct_count' => 0,
+                'total_questions' => 0
+            ], 500);
         }
-        
-        // Log all the calculation results
-        \Log::info('Post-test calculation summary', [
-            'score' => $score,
-            'maxPossibleScore' => $maxPossibleScore,
-            'percentage' => $percentage,
-            'correctCount' => $correctCount,
-            'totalQuestions' => $totalQuestions,
-            'level' => $level,
-            'passed' => $passed,
-            'levelUp' => $levelUp
-        ]);
-        
-        // Save assessment to database
-        $assessment = Assessment::create([
-            'user_id' => Auth::id(),
-            'type' => 'post_test',
-            'level' => $level,
-            'score' => $score,
-            'total_points' => $maxPossibleScore,
-            'percentage' => $percentage,
-            'passed' => $passed,
-            'answers' => $answers,
-            'language' => $language,
-            'correct_count' => $correctCount,
-            'total_questions' => $questions->count(),
-            'time_limit' => \App\Models\TestSettings::getTimeLimit('post_test', $language) ?: 45,
-            'details' => $details
-        ]);
-        
-        // Debug logging
-        \Log::info('Post-test assessment created', [
-            'user_id' => Auth::id(),
-            'assessment_id' => $assessment->id,
-            'type' => 'post_test',
-            'level' => $level,
-            'score' => $score,
-            'percentage' => $percentage,
-            'passed' => $passed,
-            'language' => $language,
-            'level_up' => $levelUp
-        ]);
-
-        // Return the result
-        return response()->json([
-            'level' => $level,
-            'score' => $score,
-            'total_points' => $maxPossibleScore,
-            'percentage' => $percentage,
-            'passed' => $passed,
-            'level_up' => $levelUp,
-            'correct_count' => $correctCount,
-            'total_questions' => $questions->count(),
-            'language' => $language
-        ]);
     }
 
     /**
@@ -1168,12 +1231,24 @@ class AssessmentController extends Controller
      */
     public function savePretestAnswers(Request $request)
     {
-        $request->validate([
-            'answers' => 'required|array',
-            'language' => 'required|string|in:id,en,ru',
-        ]);
+        // Check if this is an empty submission
+        $emptySubmission = $request->input('empty_submission', false);
+        
+        // Different validation rules based on submission type
+        if ($emptySubmission) {
+            $request->validate([
+                'language' => 'required|string|in:id,en,ru',
+                'empty_submission' => 'boolean'
+            ]);
+            $answers = [];
+        } else {
+            $request->validate([
+                'answers' => 'required|array',
+                'language' => 'required|string|in:id,en,ru',
+            ]);
+            $answers = $request->input('answers');
+        }
 
-        $answers = $request->input('answers');
         $language = $request->input('language');
         $forceClear = $request->input('force_clear', false);
         
@@ -1202,6 +1277,7 @@ class AssessmentController extends Controller
                     'user_id' => $user->id,
                     'language' => $language,
                     'answer_count' => count($answers),
+                    'empty_submission' => $emptySubmission,
                     'start_time' => session($sessionStartTimeKey)
                 ]);
             }
@@ -1287,92 +1363,246 @@ class AssessmentController extends Controller
     /**
      * Save post-test answers during the test
      *
-     * @param  \Illuminate\Http\Request  $request
+     * @param \Illuminate\Http\Request $request
      * @return \Illuminate\Http\JsonResponse
      */
     public function savePostTestAnswers(Request $request)
     {
-        // Log incoming request for debugging
-        \Log::info('Post-test save answers request', [
-            'content_type' => $request->header('Content-Type'),
-            'payload' => $request->all(),
-            'user' => Auth::id() ?? 'Not authenticated'
+        $user = auth()->user();
+        $language = $request->input('language', session('language', 'id'));
+        $answers = $request->input('answers', []);
+        $isCompleted = $request->input('completed', false);
+        $timeExpired = $request->input('time_expired', false);
+        $remainingSeconds = $request->input('remaining_seconds', null);
+        $forceComplete = $request->input('force_complete', false);
+        
+        // Validate language
+        if (!in_array($language, ['id', 'en', 'ru'])) {
+            $language = 'id';
+        }
+        
+        // Get current level
+        $level = $user->getCurrentLevel($language);
+        
+        // Log the save operation
+        \Log::info('Saving post-test answers', [
+            'user_id' => $user->id,
+            'language' => $language,
+            'level' => $level,
+            'answers_count' => is_array($answers) ? count($answers) : 'not an array',
+            'completed' => $isCompleted,
+            'time_expired' => $timeExpired,
+            'remaining_seconds' => $remainingSeconds,
+            'force_complete' => $forceComplete
         ]);
         
         try {
-            $validator = \Validator::make($request->all(), [
-                'answers' => 'required|array',
-                'language' => 'required|string|in:id,en,ru',
-            ]);
-            
-            if ($validator->fails()) {
-                \Log::error('Post-test save answers validation failed', [
-                    'errors' => $validator->errors()->toArray(),
-                    'input' => $request->all()
+            // Handle force complete flag (from client-side) with ultra-direct SQL
+            if ($forceComplete) {
+                \Log::info('Force complete flag detected, forcefully marking all active tests as completed', [
+                    'user_id' => $user->id,
+                    'language' => $language,
+                    'level' => $level
                 ]);
                 
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-            
-            $answers = $request->input('answers');
-            $language = $request->input('language');
-            $forceClear = $request->input('force_clear', false);
-            
-            if (Auth::check()) {
-                $user = Auth::user();
-                $level = $user->getCurrentLevel($language);
-                
-                // Define session keys
-                $sessionStartTimeKey = 'post_test_start_time_' . $language . '_level_' . $level;
-                $sessionAnswersKey = 'post_test_answers_' . $language . '_level_' . $level;
-                
-                if ($forceClear) {
-                    // Just clear answers without affecting time if this is a force clear
-                    session([$sessionAnswersKey => []]);
-                    Log::info('Post-test answers cleared (force)', [
-                        'user_id' => $user->id,
-                        'language' => $language,
-                        'level' => $level
+                // Use unprepared statement to bypass all constraints
+                try {
+                    \DB::unprepared("
+                        UPDATE post_test_progress 
+                        SET is_active = 0, completed = 1, completed_at = NOW() 
+                        WHERE user_id = {$user->id} AND language = '{$language}' AND level = {$level}
+                    ");
+                    
+                    \Log::info('Directly marked all tests as inactive and completed');
+                    
+                    // Also check for assessment results
+                    $hasResults = \DB::select("
+                        SELECT COUNT(*) as count
+                        FROM assessments 
+                        WHERE user_id = ? AND language = ? AND level = ? AND type = 'post_test'
+                    ", [$user->id, $language, $level])[0]->count > 0;
+                    
+                    // If there are no results yet, create a default result
+                    if (!$hasResults && $isCompleted) {
+                        \Log::info('Creating default assessment result for forcefully completed test');
+                        
+                        \DB::table('assessments')->insert([
+                            'user_id' => $user->id,
+                            'type' => 'post_test',
+                            'level' => $level,
+                            'language' => $language,
+                            'score' => 0,
+                            'total_points' => 1,
+                            'percentage' => 0,
+                            'passed' => false,
+                            'answers' => json_encode($answers),
+                            'details' => json_encode([]),
+                            'correct_count' => 0,
+                            'total_questions' => 1,
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ]);
+                    }
+                    
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Tests forcefully marked as completed'
                     ]);
-                } else {
-                    // Normal save operation
-                    session([
-                        $sessionAnswersKey => $answers,
-                        $sessionStartTimeKey => session($sessionStartTimeKey, time())
+                } catch (\Exception $e) {
+                    \Log::error('Error during force complete with direct SQL', [
+                        'error' => $e->getMessage()
                     ]);
                     
-                    Log::info('Post-test answers saved', [
+                    // Try a different approach - direct delete
+                    try {
+                        \DB::unprepared("
+                            DELETE FROM post_test_progress 
+                            WHERE user_id = {$user->id} AND language = '{$language}' AND level = {$level}
+                        ");
+                        
+                        \Log::info('Directly deleted all tests for user');
+                        
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Tests forcefully deleted'
+                        ]);
+                    } catch (\Exception $e2) {
+                        \Log::error('Error during force delete', [
+                            'error' => $e2->getMessage()
+                        ]);
+                    }
+                }
+            }
+            
+            // Get current active test
+            $progress = \App\Models\PostTestProgress::getActive($user->id, $language, $level);
+            
+            if (!$progress) {
+                // If no active test found, create one
+                $progress = \App\Models\PostTestProgress::getOrCreate($user->id, $language, $level);
+                
+                \Log::info('Created new post-test progress record during save', [
+                    'progress_id' => $progress->id ?? 'unknown'
+                ]);
+            }
+            
+            // Process answers
+            $answersData = is_array($answers) ? $answers : [];
+            
+            // Store remaining seconds in answers JSON for real-time monitoring
+            if ($remainingSeconds !== null) {
+                $answersData['_remaining_seconds'] = $remainingSeconds;
+            }
+            
+            // Mark if completed in the answers metadata
+            if ($isCompleted || $timeExpired) {
+                $answersData['_completed'] = true;
+            }
+            
+            // Set answers
+            $progress->answers = $answersData;
+            
+            // Mark as completed if needed
+            if ($isCompleted || $timeExpired) {
+                $progress->completed = true;
+                $progress->completed_at = now();
+                $progress->is_active = false;
+                
+                // Double check with direct SQL to ensure it's removed from active monitoring
+                // Use a two-step approach to avoid constraint issues
+                try {
+                    \DB::beginTransaction();
+                    // First set is_active to false
+                    \DB::statement("UPDATE post_test_progress SET is_active = 0 WHERE id = ?", [$progress->id]);
+                    // Then mark as completed
+                    \DB::statement("UPDATE post_test_progress SET completed = 1, completed_at = NOW() WHERE id = ?", [$progress->id]);
+                    \DB::commit();
+                    
+                    \Log::info('Marked post-test as completed using two-step approach', [
+                        'test_id' => $progress->id,
                         'user_id' => $user->id,
-                        'language' => $language,
-                        'level' => $level,
-                        'answer_count' => count($answers),
-                        'start_time' => session($sessionStartTimeKey)
+                        'is_time_expired' => $timeExpired
+                    ]);
+                } catch (\Exception $e) {
+                    \DB::rollBack();
+                    \Log::error('Error in two-step completion marking', [
+                        'error' => $e->getMessage(),
+                        'test_id' => $progress->id
+                    ]);
+                    
+                    // Try with direct model save as fallback
+                    try {
+                        $progress->save();
+                    } catch (\Exception $e2) {
+                        \Log::error('Fallback save also failed', [
+                            'error' => $e2->getMessage(),
+                            'test_id' => $progress->id
+                        ]);
+                    }
+                }
+                
+                // Also check for any other active tests for this user/language/level and mark them completed
+                try {
+                    $otherActiveTests = \App\Models\PostTestProgress::where('user_id', $user->id)
+                        ->where('language', $language)
+                        ->where('level', $level)
+                        ->where('is_active', true)
+                        ->where('id', '!=', $progress->id)
+                        ->get();
+                        
+                    if ($otherActiveTests->count() > 0) {
+                        \Log::warning('Found other active tests to mark as completed', [
+                            'count' => $otherActiveTests->count(),
+                            'user_id' => $user->id
+                        ]);
+                        
+                        foreach ($otherActiveTests as $test) {
+                            try {
+                                // Use the same two-step approach for each
+                                \DB::statement("UPDATE post_test_progress SET is_active = 0 WHERE id = ?", [$test->id]);
+                                \DB::statement("UPDATE post_test_progress SET completed = 1, completed_at = NOW() WHERE id = ?", [$test->id]);
+                                
+                                \Log::info('Marked additional test as completed', ['test_id' => $test->id]);
+                            } catch (\Exception $e) {
+                                \Log::error('Error marking additional test as completed', [
+                                    'error' => $e->getMessage(),
+                                    'test_id' => $test->id
+                                ]);
+                            }
+                        }
+                    }
+                } catch (\Exception $e) {
+                    \Log::error('Error checking for other active tests', [
+                        'error' => $e->getMessage(),
+                        'user_id' => $user->id
                     ]);
                 }
                 
-                return response()->json([
-                    'success' => true,
-                    'message' => $forceClear ? 'Answers cleared successfully' : 'Answers saved successfully'
+                \Log::info('Marked post-test as completed', [
+                    'test_id' => $progress->id,
+                    'user_id' => $user->id,
+                    'is_time_expired' => $timeExpired
                 ]);
+            } else {
+                // Regular save for non-completed tests
+                $progress->save();
             }
             
             return response()->json([
-                'success' => false,
-                'message' => 'User not authenticated'
-            ], 401);
+                'success' => true,
+                'message' => 'Answers saved successfully'
+            ]);
         } catch (\Exception $e) {
-            \Log::error('Post-test save answers exception', [
+            \Log::error('Error saving post-test answers', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'user_id' => $user->id,
+                'language' => $language,
+                'level' => $level
             ]);
             
             return response()->json([
                 'success' => false,
-                'message' => 'Server error: ' . $e->getMessage()
+                'message' => 'Error saving answers: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -1389,15 +1619,52 @@ class AssessmentController extends Controller
         
         if (Auth::check()) {
             $user = Auth::user();
+            $userId = $user->id;
             $level = $user->getCurrentLevel($language);
-            $answers = session('post_test_answers_' . $language . '_level_' . $level, []);
+            
+            // Get answers from database
+            $progress = \App\Models\PostTestProgress::where('user_id', $userId)
+                ->where('language', $language)
+                ->where('level', $level)
+                ->where('is_active', true)
+                ->where('completed', false)
+                ->first();
+                
+            $answers = $progress ? $progress->answers : [];
+            
+            // For backward compatibility, also check session
+            if (empty($answers)) {
+                $sessionAnswersKey = 'post_test_answers_' . $language . '_level_' . $level;
+                $sessionAnswers = session($sessionAnswersKey . '.' . $userId, []);
+                
+                if (!empty($sessionAnswers)) {
+                    $answers = $sessionAnswers;
+                    
+                    // If we have session data but no database record, create one
+                    if (!$progress) {
+                        $sessionStartTimeKey = 'post_test_start_time_' . $language . '_level_' . $level;
+                        $startTime = session($sessionStartTimeKey . '.' . $userId, now()->timestamp);
+                        
+                        \App\Models\PostTestProgress::create([
+                            'user_id' => $userId,
+                            'language' => $language,
+                            'level' => $level,
+                            'start_time' => $startTime ? \Carbon\Carbon::createFromTimestamp($startTime) : now(),
+                            'answers' => $answers,
+                            'completed' => false,
+                            'is_active' => true
+                        ]);
+                    }
+                }
+            }
             
             // Log for debugging
             Log::info('Retrieved post-test answers', [
-                'user_id' => $user->id,
+                'user_id' => $userId,
                 'language' => $language,
                 'level' => $level,
-                'answer_count' => count($answers)
+                'answer_count' => count($answers),
+                'source' => $progress ? 'database' : (empty($answers) ? 'none' : 'session')
             ]);
             
             return response()->json([
@@ -1413,37 +1680,95 @@ class AssessmentController extends Controller
     }
     
     /**
-     * Get post-test timer status
-     *
+     * Get the post-test start time for a user
+     * 
      * @param  \Illuminate\Http\Request  $request
      * @return \Illuminate\Http\JsonResponse
      */
     public function getPostTestTime(Request $request)
     {
-        $language = $request->query('language', 'id');
+        if (!Auth::check()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'User not authenticated'
+            ], 401);
+        }
         
-        if (Auth::check()) {
-            $user = Auth::user();
-            $level = $user->getCurrentLevel($language);
-            $startTime = session('post_test_start_time_' . $language . '_level_' . $level, null);
+        $language = $request->query('language', 'id');
+        $user = Auth::user();
+        $userId = $user->id;
+        $level = $user->getCurrentLevel($language);
+        
+        // Get from the database first
+        $progress = \App\Models\PostTestProgress::where('user_id', $userId)
+            ->where('language', $language)
+            ->where('level', $level)
+            ->where('is_active', true)
+            ->where('completed', false)
+            ->first();
+        
+        // Get time limit for this test
+        $timeLimit = \App\Models\TestSettings::getTimeLimit('post_test', $language) ?: 45;
+        $timeLimitSeconds = $timeLimit * 60;
+            
+        if ($progress && $progress->start_time) {
+            $startTime = $progress->start_time;
+            $currentTime = now();
+            
+            // Calculate elapsed time
+            $elapsedSeconds = max(0, $startTime->diffInSeconds($currentTime));
+            
+            // Calculate remaining time
+            $remainingSeconds = max(0, $timeLimitSeconds - $elapsedSeconds);
             
             // Log for debugging
-            Log::info('Retrieved post-test time', [
-                'user_id' => $user->id,
+            \Log::info('Post-test time data retrieved', [
+                'user_id' => $userId,
                 'language' => $language,
                 'level' => $level,
-                'start_time' => $startTime
+                'start_time' => $startTime,
+                'current_time' => $currentTime,
+                'elapsed_seconds' => $elapsedSeconds,
+                'time_limit_seconds' => $timeLimitSeconds,
+                'remaining_seconds' => $remainingSeconds
             ]);
             
             return response()->json([
                 'success' => true,
-                'start_time' => $startTime
+                'start_time' => $startTime->timestamp,
+                'current_server_time' => $currentTime->timestamp,
+                'elapsed_seconds' => $elapsedSeconds,
+                'time_limit_seconds' => $timeLimitSeconds,
+                'remaining_seconds' => $remainingSeconds
+            ]);
+        }
+        
+        // Fallback to session data
+        $sessionStartTimeKey = 'post_test_start_time_' . $language . '_level_' . $level;
+        $startTime = session($sessionStartTimeKey . '.' . $userId, 0);
+        
+        if ($startTime > 0) {
+            $currentTime = now()->timestamp;
+            $elapsedSeconds = max(0, $currentTime - $startTime);
+            $remainingSeconds = max(0, $timeLimitSeconds - $elapsedSeconds);
+            
+            return response()->json([
+                'success' => true,
+                'start_time' => $startTime,
+                'current_server_time' => $currentTime,
+                'elapsed_seconds' => $elapsedSeconds,
+                'time_limit_seconds' => $timeLimitSeconds,
+                'remaining_seconds' => $remainingSeconds
             ]);
         }
         
         return response()->json([
-            'success' => false,
-            'message' => 'User not authenticated'
-        ], 401);
+            'success' => true,
+            'start_time' => 0,
+            'current_server_time' => now()->timestamp,
+            'elapsed_seconds' => 0,
+            'time_limit_seconds' => $timeLimitSeconds,
+            'remaining_seconds' => $timeLimitSeconds
+        ]);
     }
 }

@@ -19,6 +19,54 @@
     </div>
     @endif
 
+    @if(session('error'))
+    <div class="alert alert-danger alert-dismissible fade show">
+      {{ session('error') }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    @endif
+
+    @if(Auth::user()->hasRole('teacher') && isset($teacherLanguageSettings) && is_countable($teacherLanguageSettings) && count($teacherLanguageSettings) > 0)
+    <div class="row mb-4">
+      <div class="col-md-12">
+        <div class="card shadow-sm">
+          <div class="card-header bg-info text-white">
+            <h5 class="mb-0">Pengaturan Bahasa & Level Anda</h5>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info">
+              <i class="fas fa-info-circle me-2"></i>
+              Anda hanya dapat melihat dan mengelola siswa dengan bahasa dan level yang sesuai dengan pengaturan Anda.
+            </div>
+            
+            <div class="table-responsive">
+              <table class="table table-bordered">
+                <thead class="table-light">
+                  <tr>
+                    <th>Bahasa</th>
+                    <th>Level</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @foreach($teacherLanguageSettings as $setting)
+                  <tr>
+                    <td>{{ $setting['language'] }}</td>
+                    <td>
+                      <span class="badge rounded-pill bg-primary">
+                        {{ $setting['level'] }} - {{ $setting['level_name'] }}
+                      </span>
+                    </td>
+                  </tr>
+                  @endforeach
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    @endif
+
     <div class="row">
       <div class="col-md-12">
         <div class="card">
@@ -32,6 +80,8 @@
                   <tr>
                     <th>Nama Siswa</th>
                     <th>Email</th>
+                    <th>Bahasa</th>
+                    <th>Level</th>
                     <th>Jenis Evaluasi Aktif</th>
                     <th>Pengajar</th>
                     <th>Aksi</th>
@@ -39,9 +89,34 @@
                 </thead>
                 <tbody>
                   @forelse($students as $student)
+                  @php
+                    $latestAssessment = \App\Models\Assessment::where('user_id', $student->id)
+                      ->whereIn('type', ['pretest', 'post_test', 'placement', 'level_change'])
+                      ->orderBy('created_at', 'desc')
+                      ->first();
+                      
+                    $studentLanguage = $latestAssessment ? $latestAssessment->language : '-';
+                    $studentLevel = $latestAssessment ? $latestAssessment->level : '-';
+                    
+                    $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
+                    $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                    
+                    $languageName = isset($languages[$studentLanguage]) ? $languages[$studentLanguage] : $studentLanguage;
+                    $levelName = isset($levels[$studentLevel]) ? $levels[$studentLevel] : '-';
+                  @endphp
                   <tr>
                     <td>{{ $student->name }}</td>
                     <td>{{ $student->email }}</td>
+                    <td>{{ $languageName }}</td>
+                    <td>
+                      @if($studentLevel != '-')
+                        <span class="badge rounded-pill bg-primary">
+                          {{ $studentLevel }} - {{ $levelName }}
+                        </span>
+                      @else
+                        <span class="text-muted">-</span>
+                      @endif
+                    </td>
                     <td>
                       @php
                         $settings = $student->evaluationSettings;
@@ -77,7 +152,7 @@
                   </tr>
                   @empty
                   <tr>
-                    <td colspan="5" class="text-center">Tidak ada data siswa.</td>
+                    <td colspan="7" class="text-center">Tidak ada data siswa.</td>
                   </tr>
                   @endforelse
                 </tbody>

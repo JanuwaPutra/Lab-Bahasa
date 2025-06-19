@@ -47,16 +47,111 @@ class QuestionController extends Controller
         
         $type = $request->query('type', 'pretest');
         $language = $request->query('language', 'id');
+        $level = $request->query('level');
+        $user = Auth::user();
         
-        $questions = Question::byAssessmentType($type)
-            ->orderBy('level')
+        // Base query
+        $query = Question::byAssessmentType($type);
+        
+        // If user is a teacher, filter by their assigned language levels
+        if ($user->hasRole('teacher')) {
+            $teacherLanguages = \App\Models\TeacherLanguage::where('teacher_id', $user->id)
+                ->get(['language', 'level'])
+                ->toArray();
+            
+            // If teacher has language settings, filter questions
+            if (count($teacherLanguages) > 0) {
+                $query->where(function($q) use ($teacherLanguages) {
+                    foreach ($teacherLanguages as $setting) {
+                        $q->orWhere(function($subQuery) use ($setting) {
+                            $subQuery->where('language', $setting['language'])
+                                    ->where('level', $setting['level']);
+                        });
+                    }
+                });
+            }
+            
+            // Get unique languages assigned to this teacher
+            $teacherLanguageCodes = collect($teacherLanguages)->pluck('language')->unique()->toArray();
+            
+            // If selected language is not in teacher's assigned languages, default to first available
+            if (!in_array($language, $teacherLanguageCodes) && !empty($teacherLanguageCodes)) {
+                $language = $teacherLanguageCodes[0];
+            }
+            
+            // Get available levels for the selected language
+            $availableLevels = collect($teacherLanguages)
+                ->where('language', $language)
+                ->pluck('level')
+                ->toArray();
+                
+            // If level filter is set but not available to teacher, reset it
+            if ($level && !in_array($level, $availableLevels)) {
+                $level = null;
+            }
+        } else {
+            // For admin, all levels are available
+            $availableLevels = [1, 2, 3];
+        }
+        
+        // Apply language filter
+        $query->where('language', $language);
+        
+        // Apply level filter if set
+        if ($level) {
+            $query->where('level', $level);
+        }
+        
+        // Get paginated results
+        $questions = $query->orderBy('level')
             ->orderBy('created_at', 'desc')
-            ->paginate(10);
+            ->paginate(10)
+            ->appends($request->query());
         
         // Get time limit for this test type
         $timeLimit = \App\Models\TestSettings::getTimeLimit($type, $language);
+        
+        // Get available languages for the filter dropdown
+        $availableLanguages = [];
+        if ($user->hasRole('teacher')) {
+            $availableLanguages = \App\Models\TeacherLanguage::where('teacher_id', $user->id)
+                ->select('language')
+                ->distinct()
+                ->get()
+                ->map(function($item) {
+                    $languages = ['id' => 'Bahasa Indonesia', 'en' => 'English', 'ru' => 'Russian'];
+                    return [
+                        'code' => $item->language,
+                        'name' => $languages[$item->language] ?? $item->language
+                    ];
+                })
+                ->toArray();
+        } else {
+            // For admin, show all languages
+            $availableLanguages = [
+                ['code' => 'id', 'name' => 'Bahasa Indonesia'],
+                ['code' => 'en', 'name' => 'English'],
+                ['code' => 'ru', 'name' => 'Russian']
+            ];
+        }
+        
+        // Level names for display
+        $levelNames = [
+            1 => 'Beginner',
+            2 => 'Intermediate',
+            3 => 'Advanced'
+        ];
             
-        return view('questions.index', compact('questions', 'type', 'timeLimit', 'language'));
+        return view('questions.index', compact(
+            'questions', 
+            'type', 
+            'timeLimit', 
+            'language', 
+            'level',
+            'availableLanguages',
+            'availableLevels',
+            'levelNames'
+        ));
     }
 
     /**
@@ -68,7 +163,27 @@ class QuestionController extends Controller
             return $redirect;
         }
         
-        return view('questions.create');
+        $teacher = Auth::user();
+        $teacherLanguageSettings = [];
+        
+        // If user is a teacher (not admin), get their assigned language levels
+        if ($teacher->hasRole('teacher')) {
+            $teacherLanguageSettings = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)
+                ->get()
+                ->map(function($setting) {
+                    $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
+                    $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                    
+                    return [
+                        'language_code' => $setting->language,
+                        'language' => $languages[$setting->language] ?? $setting->language,
+                        'level' => $setting->level,
+                        'level_name' => $levels[$setting->level] ?? 'Unknown'
+                    ];
+                });
+        }
+        
+        return view('questions.create', compact('teacherLanguageSettings'));
     }
 
     /**
@@ -78,6 +193,20 @@ class QuestionController extends Controller
     {
         if ($redirect = $this->checkRole()) {
             return $redirect;
+        }
+        
+        // Check if teacher has access to this language and level
+        $teacher = Auth::user();
+        if ($teacher->hasRole('teacher')) {
+            $hasAccess = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)
+                ->where('language', $request->language)
+                ->where('level', $request->level)
+                ->exists();
+                
+            if (!$hasAccess) {
+                return redirect()->route('questions.index')
+                    ->with('error', 'Anda tidak memiliki akses untuk membuat soal dengan bahasa dan level tersebut.');
+            }
         }
         
         // Debug the request data
@@ -256,7 +385,38 @@ class QuestionController extends Controller
             return $redirect;
         }
         
-        return view('questions.edit', compact('question'));
+        $teacher = Auth::user();
+        $teacherLanguageSettings = [];
+        
+        // If user is a teacher (not admin), get their assigned language levels
+        if ($teacher->hasRole('teacher')) {
+            // Check if teacher has access to this question's language and level
+            $hasAccess = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)
+                ->where('language', $question->language)
+                ->where('level', $question->level)
+                ->exists();
+                
+            if (!$hasAccess) {
+                return redirect()->route('questions.index')
+                    ->with('error', 'Anda tidak memiliki akses untuk mengedit soal dengan bahasa dan level tersebut.');
+            }
+            
+            $teacherLanguageSettings = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)
+                ->get()
+                ->map(function($setting) {
+                    $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
+                    $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                    
+                    return [
+                        'language_code' => $setting->language,
+                        'language' => $languages[$setting->language] ?? $setting->language,
+                        'level' => $setting->level,
+                        'level_name' => $levels[$setting->level] ?? 'Unknown'
+                    ];
+                });
+        }
+        
+        return view('questions.edit', compact('question', 'teacherLanguageSettings'));
     }
 
     /**
@@ -266,6 +426,27 @@ class QuestionController extends Controller
     {
         if ($redirect = $this->checkRole()) {
             return $redirect;
+        }
+        
+        // Check if teacher has access to this language and level
+        $teacher = Auth::user();
+        if ($teacher->hasRole('teacher')) {
+            // Check current question access
+            $hasCurrentAccess = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)
+                ->where('language', $question->language)
+                ->where('level', $question->level)
+                ->exists();
+                
+            // Check target language/level access if changing
+            $hasTargetAccess = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)
+                ->where('language', $request->language)
+                ->where('level', $request->level)
+                ->exists();
+                
+            if (!$hasCurrentAccess || !$hasTargetAccess) {
+                return redirect()->route('questions.index')
+                    ->with('error', 'Anda tidak memiliki akses untuk mengubah soal dengan bahasa dan level tersebut.');
+            }
         }
         
         $request->validate([

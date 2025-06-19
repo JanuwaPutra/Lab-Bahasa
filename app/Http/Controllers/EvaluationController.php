@@ -57,10 +57,50 @@ class EvaluationController extends Controller
             abort(403, 'Unauthorized action.');
         }
         
-        $students = User::where('role', 'student')->orderBy('name')->get();
+        $teacher = Auth::user();
+        $query = User::where('role', 'student');
+        
+        // Initialize teacherLanguageSettings
+        $teacherLanguageSettings = [];
+        
+        // If user is a teacher (not admin), filter students by teacher's assigned language levels
+        if ($teacher->role === 'teacher') {
+            // Get teacher's assigned language levels
+            $teacherLanguages = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)->get();
+            
+            if ($teacherLanguages->count() > 0) {
+                $query->whereHas('assessments', function($q) use ($teacherLanguages) {
+                    $q->where(function($subQuery) use ($teacherLanguages) {
+                        foreach ($teacherLanguages as $setting) {
+                            $subQuery->orWhere(function($levelQuery) use ($setting) {
+                                $levelQuery->where('language', $setting->language)
+                                          ->where('level', $setting->level);
+                            });
+                        }
+                    });
+                });
+            }
+            
+            // Get teacher's language settings for display
+            $teacherLanguageSettings = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)
+                ->get()
+                ->map(function($setting) {
+                    $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
+                    $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                    
+                    return [
+                        'language' => $languages[$setting->language] ?? $setting->language,
+                        'level' => $setting->level,
+                        'level_name' => $levels[$setting->level] ?? 'Unknown'
+                    ];
+                });
+        }
+        
+        $students = $query->orderBy('name')->get();
         
         return view('teacher.evaluation-settings', [
-            'students' => $students
+            'students' => $students,
+            'teacherLanguageSettings' => $teacherLanguageSettings
         ]);
     }
     
@@ -77,6 +117,41 @@ class EvaluationController extends Controller
         }
         
         $student = User::findOrFail($studentId);
+        $teacher = Auth::user();
+        
+        // If user is a teacher (not admin), check if they can access this student
+        if ($teacher->role === 'teacher') {
+            $teacherLanguages = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)->get();
+            
+            // Get student's latest assessment for language and level
+            $latestAssessment = Assessment::where('user_id', $student->id)
+                ->whereIn('type', ['pretest', 'post_test', 'placement', 'level_change'])
+                ->orderBy('created_at', 'desc')
+                ->first();
+            
+            if ($latestAssessment) {
+                $studentLevel = $latestAssessment->level;
+                $studentLanguage = $latestAssessment->language;
+                
+                $canAccess = false;
+                foreach ($teacherLanguages as $setting) {
+                    if ($setting->language === $studentLanguage && $setting->level === $studentLevel) {
+                        $canAccess = true;
+                        break;
+                    }
+                }
+                
+                if (!$canAccess) {
+                    return redirect()->route('teacher.evaluation.settings')
+                        ->with('error', 'Anda tidak memiliki akses untuk mengatur evaluasi siswa ini.');
+                }
+            } else {
+                // If student has no assessments yet, deny access
+                return redirect()->route('teacher.evaluation.settings')
+                    ->with('error', 'Siswa ini belum memiliki hasil tes untuk menentukan level dan bahasa.');
+            }
+        }
+        
         $settings = EvaluationSetting::getForUser($studentId);
         
         return view('teacher.student-evaluation-settings', [
@@ -98,6 +173,42 @@ class EvaluationController extends Controller
             abort(403, 'Unauthorized action.');
         }
         
+        $student = User::findOrFail($studentId);
+        $teacher = Auth::user();
+        
+        // If user is a teacher (not admin), check if they can access this student
+        if ($teacher->role === 'teacher') {
+            $teacherLanguages = \App\Models\TeacherLanguage::where('teacher_id', $teacher->id)->get();
+            
+            // Get student's latest assessment for language and level
+            $latestAssessment = Assessment::where('user_id', $student->id)
+                ->whereIn('type', ['pretest', 'post_test', 'placement', 'level_change'])
+                ->orderBy('created_at', 'desc')
+                ->first();
+            
+            if ($latestAssessment) {
+                $studentLevel = $latestAssessment->level;
+                $studentLanguage = $latestAssessment->language;
+                
+                $canAccess = false;
+                foreach ($teacherLanguages as $setting) {
+                    if ($setting->language === $studentLanguage && $setting->level === $studentLevel) {
+                        $canAccess = true;
+                        break;
+                    }
+                }
+                
+                if (!$canAccess) {
+                    return redirect()->route('teacher.evaluation.settings')
+                        ->with('error', 'Anda tidak memiliki akses untuk mengatur evaluasi siswa ini.');
+                }
+            } else {
+                // If student has no assessments yet, deny access
+                return redirect()->route('teacher.evaluation.settings')
+                    ->with('error', 'Siswa ini belum memiliki hasil tes untuk menentukan level dan bahasa.');
+            }
+        }
+        
         // Debug input
         \Log::info('Incoming request data', [
             'all' => $request->all(),
@@ -107,8 +218,6 @@ class EvaluationController extends Controller
             'show_speaking_test' => $request->has('show_speaking_test'),
             'show_grammar_test' => $request->has('show_grammar_test'),
         ]);
-        
-        $student = User::findOrFail($studentId);
         
         // Prepare settings data
         $settingsData = [

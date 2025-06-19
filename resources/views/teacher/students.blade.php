@@ -1,5 +1,46 @@
 <x-app-layout>
     <div class="container">
+        @if(Auth::user()->role === 'teacher' && isset($teacherLanguageSettings) && is_countable($teacherLanguageSettings) && count($teacherLanguageSettings) > 0)
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0">Pengaturan Bahasa & Level Anda</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Anda hanya dapat melihat dan mengelola siswa dengan bahasa dan level yang sesuai dengan pengaturan Anda.
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Bahasa</th>
+                                        <th>Level</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($teacherLanguageSettings as $setting)
+                                    <tr>
+                                        <td>{{ $setting['language'] }}</td>
+                                        <td>
+                                            <span class="badge rounded-pill bg-primary">
+                                                {{ $setting['level'] }} - {{ $setting['level_name'] }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        @endif
+        
         <div class="row mb-4">
             <div class="col-md-12">
                 <div class="card shadow-sm">
@@ -22,6 +63,7 @@
                                         <th>Email</th>
                                         <th>Level (EN)</th>
                                         <th>Level (ID)</th>
+                                        <th>Level (RU)</th>
                                         <th>Pretest</th>
                                         <th>Aksi</th>
                                     </tr>
@@ -33,10 +75,25 @@
                                         <td>{{ $student->name }}</td>
                                         <td>{{ $student->email }}</td>
                                         <td>
-                                            <span class="badge rounded-pill bg-primary">{{ $student->getCurrentLevel('en') }}</span>
+                                            @php
+                                                $enLevel = $student->getCurrentLevel('en');
+                                                $enLevelNames = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                                            @endphp
+                                            <span class="badge rounded-pill bg-primary">{{ $enLevel }} - {{ $enLevelNames[$enLevel] ?? '' }}</span>
                                         </td>
                                         <td>
-                                            <span class="badge rounded-pill bg-info">{{ $student->getCurrentLevel('id') }}</span>
+                                            @php
+                                                $idLevel = $student->getCurrentLevel('id');
+                                                $idLevelNames = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                                            @endphp
+                                            <span class="badge rounded-pill bg-info">{{ $idLevel }} - {{ $idLevelNames[$idLevel] ?? '' }}</span>
+                                        </td>
+                                        <td>
+                                            @php
+                                                $ruLevel = $student->getCurrentLevel('ru');
+                                                $ruLevelNames = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                                            @endphp
+                                            <span class="badge rounded-pill bg-secondary">{{ $ruLevel }} - {{ $ruLevelNames[$ruLevel] ?? '' }}</span>
                                         </td>
                                         <td>
                                             @if($student->hasCompletedPretest())
@@ -54,7 +111,7 @@
                                     </tr>
                                     @empty
                                     <tr>
-                                        <td colspan="7" class="text-center">Tidak ada data siswa</td>
+                                        <td colspan="8" class="text-center">Tidak ada data siswa</td>
                                     </tr>
                                     @endforelse
                                 </tbody>

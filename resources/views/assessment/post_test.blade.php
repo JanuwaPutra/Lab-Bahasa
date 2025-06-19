@@ -22,23 +22,6 @@
       background-color: #fff;
       overflow-y: auto;
     }
-    .warning-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background-color: rgba(220, 53, 69, 0.95);
-      z-index: 10000;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      color: white;
-      font-size: 1.5rem;
-      text-align: center;
-      padding: 2rem;
-    }
     /* Question navigation styles */
     .question-nav {
       display: flex;
@@ -283,8 +266,10 @@
                 <p class="mt-3 mb-0">Persentase: <span id="result-percentage" class="fw-bold"></span>%</p>
               </div>
               <div class="d-flex justify-content-between mt-4">
-                <a href="{{ route('learning.materials') }}" class="btn btn-primary">Kembali ke Pembelajaran</a>
-                <a id="retry-button" href="{{ route('post-test') }}" class="btn btn-outline-secondary d-none">Coba Lagi</a>
+                <a href="{{ route('learning.materials') }}" class="btn btn-primary" id="back-to-learning-btn">Kembali ke Pembelajaran</a>
+                <a id="retry-button" href="{{ route('post-test') }}?reset=true" class="btn btn-success d-none">
+                  <i class="fas fa-redo me-2"></i> Coba Lagi
+                </a>
               </div>
             </div>
           </div>
@@ -372,13 +357,13 @@
       const MAX_SERVER_ERRORS = 3; // After this many errors, we'll assume server is unreachable
       let isOfflineMode = false;
       
-      // Anti-cheating variables
-      let warningCount = 0;
-      const MAX_WARNINGS = 2;
-      let isTestActive = false;
-      let isFullscreenMode = false;
-      let visibilityWarningShown = false;
-      let warningOverlay = null;
+      // Test state tracking
+      let testInProgress = false;
+      
+      // Function to disable beforeunload warning
+      function disableBeforeUnloadWarning() {
+        testInProgress = false;
+      }
       
       // Function to handle server errors
       function handleServerError(error, operation) {
@@ -427,6 +412,30 @@
         const startTime = localStorage.getItem(`${STORAGE_PREFIX}start_time`);
         const isStarted = localStorage.getItem(`${STORAGE_PREFIX}is_started`);
         const answers = localStorage.getItem(`${STORAGE_PREFIX}answers`);
+        
+        // Check URL for reset parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const resetParam = urlParams.get('reset');
+        
+        // If reset parameter is present, clear everything and start fresh
+        if (resetParam === 'true') {
+          console.log('Reset parameter detected, starting fresh test');
+          resetTestState();
+          // Show confirmation card instead of starting test automatically
+          confirmationCard.classList.remove('d-none');
+          testCard.classList.add('d-none');
+          timerCard.classList.add('d-none');
+          document.getElementById('question-nav-card').classList.add('d-none');
+          
+          // Show information and tips cards
+          const infoCard = document.getElementById('info-card');
+          const tipsCard = document.getElementById('tips-card');
+          
+          if (infoCard) infoCard.classList.remove('d-none');
+          if (tipsCard) tipsCard.classList.remove('d-none');
+          
+          return;
+        }
         
         if (isStarted && startTime) {
           // Test sudah dimulai sebelumnya
@@ -481,19 +490,48 @@
         localStorage.removeItem(`${STORAGE_PREFIX}start_time`);
         localStorage.removeItem(`${STORAGE_PREFIX}is_started`);
         localStorage.removeItem(`${STORAGE_PREFIX}answers`);
-        localStorage.removeItem(`${STORAGE_PREFIX}warning_count`);
         
-        // Reset variables
-        warningCount = 0;
-        isTestActive = false;
-        isFullscreenMode = false;
-        visibilityWarningShown = false;
+        // Reset any form elements
+        const formElements = document.querySelectorAll('input[type="radio"], input[type="text"], textarea');
+        formElements.forEach(element => {
+          if (element.type === 'radio') {
+            element.checked = false;
+          } else {
+            element.value = '';
+          }
+        });
         
-        // Remove warning overlay if exists
-        if (warningOverlay && warningOverlay.parentNode) {
-          warningOverlay.parentNode.removeChild(warningOverlay);
-          warningOverlay = null;
+        // Reset word counts for essays
+        document.querySelectorAll('.word-count').forEach(element => {
+          element.textContent = '0';
+        });
+        
+        // Reset navigation
+        document.querySelectorAll('.question-nav-item').forEach(item => {
+          item.classList.remove('answered');
+          item.classList.remove('active');
+          // Reset the first item to active
+          if (item.getAttribute('data-question-index') === '0') {
+            item.classList.add('active');
+          }
+        });
+        
+        // Reset current question index
+        currentQuestionIndex = 0;
+        
+        // Reset question counter
+        if (questionCounter) {
+          questionCounter.textContent = `1 / ${totalQuestions}`;
         }
+        
+        // Show first question, hide others
+        questionItems.forEach((item, index) => {
+          if (index === 0) {
+            item.classList.remove('d-none');
+          } else {
+            item.classList.add('d-none');
+          }
+        });
         
         // Get fresh CSRF token
         const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
@@ -508,7 +546,7 @@
             'Accept': 'application/json'
           },
           body: JSON.stringify({
-            answers: [], // Make sure it's an array for Laravel validation
+            answers: {}, // Use an empty object
             language: '{{ $language ?? "id" }}',
             force_clear: true
           })
@@ -543,6 +581,9 @@
         timerCard.classList.remove('d-none');
         document.getElementById('question-nav-card').classList.remove('d-none');
         
+        // Set test in progress flag
+        testInProgress = true;
+        
         // Hide information and tips cards
         const infoCard = document.getElementById('info-card');
         const tipsCard = document.getElementById('tips-card');
@@ -554,17 +595,38 @@
           // Reset any previous test state
           resetTestState();
           
+          // Reset all form inputs
+          document.querySelectorAll('input[type="radio"]').forEach(radio => {
+            radio.checked = false;
+          });
+          
+          document.querySelectorAll('input[type="text"], textarea').forEach(input => {
+            input.value = '';
+          });
+          
+          // Reset word counts
+          document.querySelectorAll('.word-count').forEach(count => {
+            count.textContent = '0';
+          });
+          
+          // Reset navigation markers
+          document.querySelectorAll('.question-nav-item').forEach(item => {
+            item.classList.remove('answered');
+          });
+          
           // Set start time
           const currentTime = Math.floor(Date.now() / 1000);
           localStorage.setItem(`${STORAGE_PREFIX}start_time`, currentTime);
           localStorage.setItem(`${STORAGE_PREFIX}is_started`, 'true');
           localStorage.setItem(`${STORAGE_PREFIX}answers`, JSON.stringify({}));
-          localStorage.setItem(`${STORAGE_PREFIX}warning_count`, '0');
           
           // Get fresh CSRF token
           const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
           
-          // Juga simpan waktu mulai ke server
+          // Make an explicit reset_attempt call to ensure the test is properly registered
+          console.log('Starting new post-test with reset_attempt=true');
+          
+          // Send the reset_attempt request
           fetch('{{ route('post-test.save-answers') }}', {
             method: 'POST',
             headers: {
@@ -573,8 +635,9 @@
               'Accept': 'application/json'
             },
             body: JSON.stringify({
-              answers: [], // Make sure it's an array for Laravel validation
-              language: '{{ $language ?? "id" }}'
+              answers: {}, // Use an object instead of an array
+              language: '{{ $language ?? "id" }}',
+              reset_attempt: true // Signal to server this is a new attempt
             })
           })
           .then(response => {
@@ -597,359 +660,10 @@
             handleServerError(error, 'saving start time');
             // Continue anyway, we have the start time in localStorage
           });
-        } else {
-          // Restore warning count if exists
-          const savedWarningCount = localStorage.getItem(`${STORAGE_PREFIX}warning_count`);
-          if (savedWarningCount) {
-            warningCount = parseInt(savedWarningCount);
-          }
         }
-        
-        // Setup anti-cheating measures but don't enter fullscreen yet
-        setupAntiCheating();
         
         startTimer();
         updateNavigation();
-      }
-      
-      // Setup anti-cheating measures without entering fullscreen
-      function setupAntiCheating() {
-        isTestActive = true;
-        
-        // Add event listeners for anti-cheating detection
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        window.addEventListener('blur', handleWindowBlur);
-        document.addEventListener('keydown', handleKeyDown);
-        window.addEventListener('resize', checkFullscreenStatus);
-        
-        // Disable right-click
-        document.addEventListener('contextmenu', preventDefaultAction);
-        
-        // Disable selection
-        document.addEventListener('selectstart', preventDefaultAction);
-        
-        // Disable copying
-        document.addEventListener('copy', preventDefaultAction);
-        
-        // Check fullscreen status periodically
-        setInterval(checkFullscreenStatus, 1000);
-      }
-      
-      // Disable anti-cheating measures
-      function disableAntiCheating() {
-        isTestActive = false;
-        
-        // Remove event listeners first
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        window.removeEventListener('blur', handleWindowBlur);
-        document.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('resize', checkFullscreenStatus);
-        document.removeEventListener('contextmenu', preventDefaultAction);
-        document.removeEventListener('selectstart', preventDefaultAction);
-        document.removeEventListener('copy', preventDefaultAction);
-        
-        // Exit fullscreen mode - do this after removing event listeners
-        try {
-          exitFullscreenMode();
-        } catch (error) {
-          console.error('Error exiting fullscreen:', error);
-        }
-      }
-      
-      // Enter fullscreen mode
-      function enterFullscreenMode() {
-        const container = document.getElementById('post-test-container');
-        if (!container) return;
-        
-        // Create fullscreen container
-        const fullscreenContainer = document.createElement('div');
-        fullscreenContainer.id = 'fullscreen-wrapper';
-        fullscreenContainer.className = 'fullscreen-container';
-        
-        // Move test content to fullscreen container
-        document.body.appendChild(fullscreenContainer);
-        fullscreenContainer.appendChild(container);
-        
-        // Add fullscreen class to body
-        document.body.classList.add('fullscreen-mode');
-        
-        // Request browser fullscreen with options to prevent ESC key from exiting
-        try {
-          // Try to use newer options to lock keyboard
-          if (document.documentElement.requestFullscreen) {
-            document.documentElement.requestFullscreen().catch(error => {
-              console.error('Standard fullscreen request failed:', error);
-            });
-          } else if (document.documentElement.mozRequestFullScreen) {
-            document.documentElement.mozRequestFullScreen();
-          } else if (document.documentElement.webkitRequestFullscreen) {
-            // For Safari: use Element.ALLOW_KEYBOARD_INPUT
-            document.documentElement.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
-          } else if (document.documentElement.msRequestFullscreen) {
-            document.documentElement.msRequestFullscreen();
-          }
-        } catch (error) {
-          console.error('Fullscreen error:', error);
-        }
-        
-        isFullscreenMode = true;
-      }
-      
-      // Exit fullscreen mode
-      function exitFullscreenMode() {
-        const container = document.getElementById('post-test-container');
-        const wrapper = document.getElementById('fullscreen-wrapper');
-        
-        // First check if we're actually in fullscreen mode
-        const isCurrentlyFullscreen = !!(
-          document.fullscreenElement ||
-          document.mozFullScreenElement ||
-          document.webkitFullscreenElement ||
-          document.msFullscreenElement
-        );
-        
-        if (isCurrentlyFullscreen) {
-          try {
-            // Exit browser fullscreen
-            if (document.exitFullscreen) {
-              document.exitFullscreen().catch(error => {
-                console.error('Error exiting fullscreen:', error);
-              });
-            } else if (document.mozCancelFullScreen) {
-              document.mozCancelFullScreen();
-            } else if (document.webkitExitFullscreen) {
-              document.webkitExitFullscreen();
-            } else if (document.msExitFullscreen) {
-              document.msExitFullscreen();
-            }
-          } catch (error) {
-            console.error('Error exiting fullscreen:', error);
-          }
-        }
-        
-        // Move content back regardless of fullscreen state
-        if (container && wrapper) {
-          try {
-            // Move test content back to original position
-            wrapper.parentNode.insertBefore(container, wrapper);
-            wrapper.remove();
-          } catch (error) {
-            console.error('Error moving content back:', error);
-          }
-        }
-        
-        // Remove fullscreen class from body
-        document.body.classList.remove('fullscreen-mode');
-        
-        isFullscreenMode = false;
-      }
-      
-      // Check fullscreen status
-      function checkFullscreenStatus() {
-        if (!isTestActive) return;
-        
-        const isCurrentlyFullscreen = !!(
-          document.fullscreenElement ||
-          document.mozFullScreenElement ||
-          document.webkitFullscreenElement ||
-          document.msFullscreenElement
-        );
-        
-        // Only show warning if we were in fullscreen and now we're not
-        if (isFullscreenMode && !isCurrentlyFullscreen) {
-          isFullscreenMode = false; // Update to prevent multiple warnings
-          showCheatingWarning('Anda keluar dari mode fullscreen. Ini dianggap sebagai upaya kecurangan.');
-        }
-      }
-      
-      // Handle visibility change (tab switching)
-      function handleVisibilityChange() {
-        if (!isTestActive) return;
-        
-        if (document.visibilityState === 'hidden') {
-          visibilityWarningShown = true;
-          // User switched tabs or minimized window
-          showCheatingWarning('Anda beralih ke tab/aplikasi lain. Ini dianggap sebagai upaya kecurangan.');
-        }
-      }
-      
-      // Handle window blur (clicking outside the window)
-      function handleWindowBlur() {
-        if (!isTestActive || visibilityWarningShown) return;
-        
-        // User clicked outside the window
-        showCheatingWarning('Anda mengakses aplikasi lain. Ini dianggap sebagai upaya kecurangan.');
-        
-        // Reset visibility warning flag
-        visibilityWarningShown = false;
-      }
-      
-      // Handle keyboard shortcuts
-      function handleKeyDown(e) {
-        if (!isTestActive) return;
-        
-        // Only capture keyboard shortcuts but NOT ESC key
-        // Let the fullscreen event handler deal with ESC key to prevent double counting
-        if ((e.altKey || e.ctrlKey || e.metaKey || e.key === 'F12') && e.key !== 'Escape') {
-          e.preventDefault();
-          showCheatingWarning('Penggunaan shortcut keyboard terdeteksi. Ini dianggap sebagai upaya kecurangan.');
-          return false;
-        }
-      }
-      
-      // Prevent default action
-      function preventDefaultAction(e) {
-        if (isTestActive) {
-          e.preventDefault();
-          return false;
-        }
-      }
-      
-      // Show cheating warning
-      function showCheatingWarning(message) {
-        // Get current warning count from storage if available
-        let currentWarningCount = parseInt(localStorage.getItem(`${STORAGE_PREFIX}warning_count`)) || 0;
-        
-        // Only increment if not already at max
-        if (currentWarningCount < MAX_WARNINGS) {
-          currentWarningCount++;
-          warningCount = currentWarningCount;
-          // Save warning count to localStorage
-          localStorage.setItem(`${STORAGE_PREFIX}warning_count`, currentWarningCount.toString());
-        }
-        
-        // Remove any existing warning overlay first to prevent stacking
-        if (warningOverlay && warningOverlay.parentNode) {
-          warningOverlay.parentNode.removeChild(warningOverlay);
-          warningOverlay = null;
-        }
-        
-        // Create new warning overlay
-        warningOverlay = document.createElement('div');
-        warningOverlay.className = 'warning-overlay';
-        document.body.appendChild(warningOverlay);
-        
-        // Update warning message
-        warningOverlay.innerHTML = `
-          <h2><i class="fas fa-exclamation-triangle mb-3"></i></h2>
-          <h3>PERINGATAN!</h3>
-          <p>${message}</p>
-          <p>Peringatan ${Math.min(currentWarningCount, MAX_WARNINGS)} dari ${MAX_WARNINGS}</p>
-          <p class="mt-3">${currentWarningCount >= MAX_WARNINGS ? 'Anda telah mencapai batas maksimum peringatan. Tes akan disubmit dengan nilai 0.' : 'Jika terjadi sekali lagi, tes akan otomatis disubmit dengan nilai 0.'}</p>
-          ${currentWarningCount < MAX_WARNINGS ? '<button id="continue-test-btn" class="btn btn-light mt-3">Lanjutkan Tes</button>' : ''}
-        `;
-        
-        // Show warning
-        warningOverlay.style.display = 'flex';
-        
-        // Add event listener to continue button if available
-        const continueButton = document.getElementById('continue-test-btn');
-        if (continueButton) {
-          continueButton.addEventListener('click', function() {
-            if (warningOverlay) {
-              warningOverlay.style.display = 'none';
-              
-              // Remove from DOM completely to prevent stacking
-              if (warningOverlay.parentNode) {
-                warningOverlay.parentNode.removeChild(warningOverlay);
-                warningOverlay = null;
-              }
-            }
-            
-            // Re-enter fullscreen directly from user interaction (button click)
-            // This should work because it's directly tied to the user's click
-            try {
-              enterFullscreenMode();
-            } catch (error) {
-              console.error('Error re-entering fullscreen from continue button:', error);
-            }
-          });
-        }
-        
-        // If max warnings reached, auto-submit with zero score
-        if (currentWarningCount >= MAX_WARNINGS) {
-          setTimeout(() => {
-            submitTestWithZeroScore();
-          }, 3000);
-        }
-      }
-      
-      // Submit test with zero score due to cheating
-      function submitTestWithZeroScore() {
-        // Remove any existing warning overlay first
-        if (warningOverlay && warningOverlay.parentNode) {
-          warningOverlay.parentNode.removeChild(warningOverlay);
-          warningOverlay = null;
-        }
-        
-        // Create new warning overlay for submission message
-        warningOverlay = document.createElement('div');
-        warningOverlay.className = 'warning-overlay';
-        document.body.appendChild(warningOverlay);
-        
-        // Update warning overlay
-        warningOverlay.innerHTML = `
-          <h2><i class="fas fa-ban mb-3"></i></h2>
-          <h3>KECURANGAN TERDETEKSI!</h3>
-          <p>Anda telah mencapai batas maksimum peringatan.</p>
-          <p>Tes akan disubmit dengan nilai 0.</p>
-          <div class="spinner-border text-light mt-3" role="status">
-            <span class="visually-hidden">Loading...</span>
-          </div>
-        `;
-        
-        // Show warning
-        warningOverlay.style.display = 'flex';
-        
-        // Disable anti-cheating first
-        try {
-          disableAntiCheating();
-        } catch (error) {
-          console.error('Error disabling anti-cheating:', error);
-        }
-        
-        // Reset test state completely
-        resetTestState();
-        
-        // Get fresh CSRF token
-        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-        
-        // Submit with zero score
-        fetch('{{ route("post-test.evaluate") }}', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': csrfToken,
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({ 
-            answers: [], // Make sure it's an array for Laravel validation
-            language: '{{ $language ?? "id" }}',
-            cheating_detected: true
-          })
-        })
-        .then(response => {
-          // Check if response is JSON
-          const contentType = response.headers.get('content-type');
-          if (contentType && contentType.includes('application/json')) {
-            return response.json();
-          } else {
-            // If not JSON, just redirect anyway
-            throw new Error('Non-JSON response when submitting zero score');
-          }
-        })
-        .then(data => {
-          // Redirect to result page
-          window.location.href = '{{ route("dashboard") }}?from_post_test=true&cheating=true';
-          serverErrorCount = 0; // Reset error count on success
-        })
-        .catch(error => {
-          handleServerError(error, 'submitting zero score test');
-          // Redirect anyway after a short delay
-          setTimeout(() => {
-            window.location.href = '{{ route("dashboard") }}?from_post_test=true&cheating=true';
-          }, 1000);
-        });
       }
       
       // Update navigation buttons and question counter
@@ -976,37 +690,38 @@
       
       // Timer function
       function startTimer() {
+        // Get the start time from local storage
         const startTime = parseInt(localStorage.getItem(`${STORAGE_PREFIX}start_time`));
-        const currentTime = Math.floor(Date.now() / 1000);
-        let elapsed = currentTime - startTime;
-        let remaining = TEST_TIME - elapsed;
         
-        if (remaining <= 0) {
-          // Time's up, submit the test
-          submitTest();
-          return;
-        }
+        // Sync with server immediately at startup
+        syncTimeWithServer();
         
-        updateTimerDisplay(remaining);
-        // Store timer interval in a global variable so it can be cleared from anywhere
+        // Set timer interval
         window.timerInterval = setInterval(() => {
-          remaining--;
-          updateTimerDisplay(remaining);
+          // Get the current time and calculate remaining time
+          const currentTime = Math.floor(Date.now() / 1000);
+          const elapsedSeconds = Math.max(0, currentTime - startTime);
+          const timeLimit = {{ isset($timeLimit) ? $timeLimit * 60 : 45 * 60 }};
+          const remainingSeconds = Math.max(0, timeLimit - elapsedSeconds);
           
-          // Save progress every 10 seconds
-          if (remaining % 10 === 0) {
+          // Update the timer display
+          updateTimerDisplay(remainingSeconds);
+          
+          // Save progress more frequently (every 5 seconds) to keep real-time monitoring accurate
+          if (elapsedSeconds % 5 === 0) {
             saveAnswers();
           }
           
-          // Tambahan: setiap 30 detik, coba cek waktu dari server (sinkronisasi)
-          if (remaining % 30 === 0) {
+          // Sync with server every 10 seconds
+          if (elapsedSeconds % 10 === 0) {
             syncTimeWithServer();
           }
           
-          if (remaining <= 0) {
+          // Check if time's up
+          if (remainingSeconds <= 0) {
             clearInterval(window.timerInterval);
             window.timerInterval = null;
-            submitTest();
+            submitTest(true);
           }
         }, 1000);
       }
@@ -1055,35 +770,34 @@
         })
         .then(data => {
           if (data.success && data.start_time) {
-            const serverStartTime = parseInt(data.start_time);
-            const currentTime = Math.floor(Date.now() / 1000);
-            const elapsedFromServer = currentTime - serverStartTime;
-            
             // If server has a valid start time, update our timer
-            if (serverStartTime > 0) {
+            if (data.start_time > 0) {
               // Update localStorage with server's start time
-              localStorage.setItem(`${STORAGE_PREFIX}start_time`, serverStartTime);
+              localStorage.setItem(`${STORAGE_PREFIX}start_time`, data.start_time);
               
-              // Calculate new remaining time
-              const newRemaining = TEST_TIME - elapsedFromServer;
+              // Use direct values from the server when available
+              let newRemaining = data.remaining_seconds;
               
-              // If there's a significant difference (more than 10 seconds)
-              // between our timer and server's timer, update it
-              if (Math.abs(newRemaining - remaining) > 10) {
-                console.log('Syncing time with server. Old remaining:', remaining, 'New remaining:', newRemaining);
-                
-                // Update the remaining time globally
-                remaining = Math.max(0, newRemaining);
-                
-                // Update display immediately
-                updateTimerDisplay(remaining);
-                
-                // If time's up according to server, submit the test
-                if (remaining <= 0) {
-                  clearInterval(window.timerInterval);
-                  window.timerInterval = null;
-                  submitTest();
-                }
+              console.log('Time sync with server:', {
+                serverStartTime: new Date(data.start_time * 1000).toLocaleTimeString(),
+                currentServerTime: new Date(data.current_server_time * 1000).toLocaleTimeString(),
+                elapsedSeconds: data.elapsed_seconds,
+                elapsedFormatted: Math.floor(data.elapsed_seconds / 60) + ':' + String(data.elapsed_seconds % 60).padStart(2, '0'),
+                remainingSeconds: data.remaining_seconds,
+                remainingFormatted: Math.floor(data.remaining_seconds / 60) + ':' + String(data.remaining_seconds % 60).padStart(2, '0')
+              });
+              
+              // Force update display immediately
+              updateTimerDisplay(newRemaining);
+              
+              // Also save this remaining time to the database for monitoring
+              saveRemainingTime(newRemaining);
+              
+              // If time's up according to server, submit the test
+              if (newRemaining <= 0) {
+                clearInterval(window.timerInterval);
+                window.timerInterval = null;
+                submitTest(true);
               }
             }
             
@@ -1094,6 +808,41 @@
         .catch(error => {
           handleServerError(error, 'syncing time with server');
           // Don't interrupt the test flow, just continue with local time
+        });
+      }
+      
+      // Function to save only the remaining time to the database
+      function saveRemainingTime(remainingSeconds) {
+        // Get the answers data from localStorage
+        const answers = JSON.parse(localStorage.getItem(`${STORAGE_PREFIX}answers`) || '{}');
+        
+        // Add remaining seconds to answers object
+        answers['_remaining_seconds'] = remainingSeconds;
+        
+        // Save back to localStorage
+        localStorage.setItem(`${STORAGE_PREFIX}answers`, JSON.stringify(answers));
+        
+        // Get fresh CSRF token
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+        
+        // Send to server
+        fetch('{{ route('post-test.save-answers') }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': csrfToken,
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            answers: answers,
+            language: '{{ $language ?? "id" }}',
+            completed: false,
+            remaining_seconds: remainingSeconds
+          })
+        })
+        .catch(error => {
+          console.error('Error saving remaining time:', error);
+          // Just log the error, don't block the test flow
         });
       }
       
@@ -1121,16 +870,11 @@
       // Start test button
       if (startTestBtn) {
         startTestBtn.addEventListener('click', () => {
-          // Start the test
-          startTest(true);
+          // Reset any previous test state first
+          resetTestState();
           
-          // Request fullscreen directly from the user interaction
-          // This should work because it's directly tied to the user's click
-          try {
-            enterFullscreenMode();
-          } catch (error) {
-            console.error('Error entering fullscreen from button click:', error);
-          }
+          // Start the test as new
+          startTest(true);
         });
       }
       
@@ -1153,7 +897,7 @@
       });
       
       // Save answers to local storage and server
-      function saveAnswers() {
+      function saveAnswers(isCompleted = false) {
         const answers = {};
         
         questionItems.forEach(item => {
@@ -1194,8 +938,22 @@
         // Get fresh CSRF token
         const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
         
-        // Convert to array if empty for Laravel validation
-        const submittableAnswers = Object.keys(answers).length > 0 ? answers : [];
+        // Always send an object, even if empty
+        const submittableAnswers = Object.keys(answers).length > 0 ? answers : {};
+        
+        // Get current time and calculate remaining time
+        const startTime = parseInt(localStorage.getItem(`${STORAGE_PREFIX}start_time`) || '0');
+        const currentTime = Math.floor(Date.now() / 1000);
+        const elapsedSeconds = Math.max(0, currentTime - startTime);
+        const timeLimit = {{ isset($timeLimit) ? $timeLimit * 60 : 45 * 60 }};
+        const remainingSeconds = isCompleted ? 0 : Math.max(0, timeLimit - elapsedSeconds);
+        
+        // Add metadata to answers for monitoring
+        submittableAnswers['_remaining_seconds'] = remainingSeconds;
+        
+        if (isCompleted) {
+          submittableAnswers['_completed'] = true;
+        }
         
         // Save to server untuk persistensi
         fetch('{{ route('post-test.save-answers') }}', {
@@ -1207,7 +965,9 @@
           },
           body: JSON.stringify({
             answers: submittableAnswers,
-            language: '{{ $language ?? "id" }}'
+            language: '{{ $language ?? "id" }}',
+            completed: isCompleted,
+            remaining_seconds: remainingSeconds
           })
         })
         .then(response => {
@@ -1258,8 +1018,12 @@
       }
       
       // Submit test
-      function submitTest() {
-        saveAnswers();
+      function submitTest(isTimeUp = false) {
+        // Save answers with completed flag
+        saveAnswers(true);
+        
+        // Clear test in progress flag
+        testInProgress = false;
         
         questionsContainer.classList.add('d-none');
         loadingContainer.classList.remove('d-none');
@@ -1282,18 +1046,58 @@
         // Debug log
         console.log('Submitting answers:', answers);
         
-        // Keep fullscreen mode active, but remove other anti-cheating measures
-        keepFullscreenOnlyMode();
-        
-        // Reset test state completely but keep fullscreen
-        resetTestStateKeepFullscreen();
-        
         // Get fresh CSRF token
         const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
         
-        // Check if answers is empty
+        // Force delete any active tests first
+        forceMarkTestCompleted(csrfToken)
+          .then(() => {
+            // Continue with submission after force marking test as completed
+            continueSubmission(answers, isTimeUp, csrfToken);
+          })
+          .catch(error => {
+            console.error('Error during force completion:', error);
+            // Continue anyway
+            continueSubmission(answers, isTimeUp, csrfToken);
+          });
+      }
+      
+      // Force mark test as completed (separate request)
+      function forceMarkTestCompleted(csrfToken) {
+        console.log('Force marking test as completed');
+        
+        return fetch('{{ route('post-test.save-answers') }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': csrfToken,
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            answers: { '_completed': true, '_remaining_seconds': 0 },
+            language: '{{ $language ?? "id" }}',
+            completed: true,
+            remaining_seconds: 0,
+            force_complete: true  // Special flag for backend
+          })
+        })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`Force mark completed failed: ${response.status}`);
+          }
+          return response.json();
+        })
+        .then(data => {
+          console.log('Force mark completed response:', data);
+          return data;
+        });
+      }
+      
+      // Continue with the submission process
+      function continueSubmission(answers, isTimeUp, csrfToken) {
+        // Check if answers is empty and it's not a time-up submission
         const hasAnswers = Object.keys(answers).length > 0;
-        if (!hasAnswers) {
+        if (!hasAnswers && !isTimeUp) {
           // Show warning for empty submission
           loadingContainer.classList.add('d-none');
           resultContainer.classList.remove('d-none');
@@ -1317,117 +1121,187 @@
           return;
         }
         
-        // Submit answers via AJAX with retry mechanism
-        function attemptSubmit(retryCount = 0) {
-          const submittableAnswers = Object.keys(answers).length > 0 ? answers : [];
+        // Set a timeout to handle cases where the fetch might hang
+        const submissionTimeout = setTimeout(() => {
+          console.warn('Submission request timed out');
+          loadingContainer.classList.add('d-none');
+          resultContainer.classList.remove('d-none');
           
-          fetch('{{ route("post-test.evaluate") }}', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({ 
-              answers: submittableAnswers, // Use an array if empty
-              language: '{{ $language ?? "id" }}' // Use language from view
-            })
-          })
-          .then(response => {
-            // Check if response is JSON
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-              return response.json();
-            } else {
-              // If not JSON, session might have expired - refresh CSRF token and retry
-              return refreshCsrfToken().then(() => {
-                throw new Error('Session expired, CSRF token refreshed');
-              });
-            }
-          })
-          .then(data => {
-            loadingContainer.classList.add('d-none');
-            resultContainer.classList.remove('d-none');
-            
-            // Force scroll to top to ensure results are visible
-            window.scrollTo(0, 0);
-            document.body.scrollTop = 0;
-            document.documentElement.scrollTop = 0;
-            
-            // Display result
-            const resultAlert = document.getElementById('result-alert');
-            const resultMessage = document.getElementById('result-message');
-            
-            // Clear previous classes
-            resultAlert.className = 'alert';
-            
-            if (data.passed) {
-              resultAlert.classList.add('alert-success');
-              resultMessage.textContent = 'Selamat! Anda lulus post-test ini.';
-              
-              if (data.level_up) {
-                resultMessage.textContent += ' Anda telah naik ke level berikutnya!';
-                
-                // Redirect to dashboard after 3 seconds to show the updated level
-                setTimeout(() => {
-                  window.location.href = '{{ route("dashboard") }}?from_post_test=true&level_up=true';
-                }, 3000);
-              }
-            } else {
-              resultAlert.classList.add('alert-danger');
-              resultMessage.textContent = 'Maaf, Anda belum lulus post-test ini. Anda perlu mendapatkan minimal 70%.';
-              retryButton.classList.remove('d-none');
-            }
-            
-            document.getElementById('result-score').textContent = data.score;
-            document.getElementById('result-total-points').textContent = data.total_points;
-            document.getElementById('result-percentage').textContent = data.percentage;
-            document.getElementById('result-correct-count').textContent = data.correct_count;
-            document.getElementById('result-total-questions').textContent = data.total_questions;
-            
-            // Update progress bars
-            const scorePercentage = data.total_points > 0 ? (data.score / data.total_points) * 100 : 0;
-            const correctPercentage = data.total_questions > 0 ? (data.correct_count / data.total_questions) * 100 : 0;
-            
-            document.getElementById('score-progress').style.width = `${scorePercentage}%`;
-            document.getElementById('correct-progress').style.width = `${correctPercentage}%`;
-            
-            // Make sure result container is fully visible within fullscreen mode
-            resultContainer.style.display = 'block';
-            resultContainer.scrollIntoView({ behavior: 'auto', block: 'start' });
-          })
-          .catch(error => {
-            console.error('Error submitting test:', error);
-            
-            // Retry logic
-            if (retryCount < 2) {
-              console.log(`Retrying submission (${retryCount + 1}/2)...`);
-              setTimeout(() => attemptSubmit(retryCount + 1), 1000);
-            } else {
-              // After all retries failed, use local fallback
-              loadingContainer.classList.add('d-none');
-              resultContainer.classList.remove('d-none');
-              
-              const resultAlert = document.getElementById('result-alert');
-              const resultMessage = document.getElementById('result-message');
-              
-              resultAlert.className = 'alert alert-warning';
-              resultMessage.textContent = 'Terjadi kesalahan koneksi ke server. Jawaban Anda telah disimpan secara lokal.';
-              
-              // Show basic result with what we know locally
-              document.getElementById('result-score').textContent = 'N/A';
-              document.getElementById('result-total-points').textContent = '{{ count($questions) }}';
-              document.getElementById('result-percentage').textContent = 'N/A';
-              document.getElementById('result-correct-count').textContent = 'N/A';
-              document.getElementById('result-total-questions').textContent = '{{ count($questions) }}';
-              
-              retryButton.classList.remove('d-none');
-            }
-          });
-        }
+          const resultAlert = document.getElementById('result-alert');
+          const resultMessage = document.getElementById('result-message');
+          
+          resultAlert.className = 'alert alert-danger';
+          resultMessage.textContent = 'Terjadi kesalahan saat mengevaluasi jawaban. Silakan coba lagi nanti.';
+          retryButton.classList.remove('d-none');
+          
+          document.getElementById('result-score').textContent = '0';
+          document.getElementById('result-total-points').textContent = '{{ count($questions) }}';
+          document.getElementById('result-percentage').textContent = '0';
+          document.getElementById('result-correct-count').textContent = '0';
+          document.getElementById('result-total-questions').textContent = '{{ count($questions) }}';
+          
+          document.getElementById('score-progress').style.width = '0%';
+          document.getElementById('correct-progress').style.width = '0%';
+          
+          // Reset test state in local storage
+          localStorage.removeItem(`${STORAGE_PREFIX}start_time`);
+          localStorage.removeItem(`${STORAGE_PREFIX}is_started`);
+          localStorage.removeItem(`${STORAGE_PREFIX}answers`);
+        }, 20000); // 20 seconds timeout
         
-        // Start submission process
-        attemptSubmit();
+        // Get current time and calculate remaining time
+        const startTime = parseInt(localStorage.getItem(`${STORAGE_PREFIX}start_time`) || '0');
+        const currentTime = Math.floor(Date.now() / 1000);
+        const elapsedSeconds = Math.max(0, currentTime - startTime);
+        const timeLimit = {{ isset($timeLimit) ? $timeLimit * 60 : 45 * 60 }};
+        const remainingSeconds = Math.max(0, timeLimit - elapsedSeconds);
+        
+        // Always send an object, even if empty
+        const submittableAnswers = hasAnswers ? answers : {};
+        
+        // Add metadata to answers to mark as completed
+        submittableAnswers['_completed'] = true;
+        submittableAnswers['_remaining_seconds'] = 0; // Set to 0 when completed
+        
+        // Submit answers directly without retry mechanism
+        fetch('{{ route("post-test.evaluate") }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': csrfToken,
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({ 
+            answers: submittableAnswers,
+            language: '{{ $language ?? "id" }}', // Use language from view
+            time_expired: isTimeUp,
+            completed: true,  // Explicitly mark as completed
+            remaining_seconds: 0  // Set to 0 when completed
+          })
+        })
+        .then(response => {
+          // Log the response status for debugging
+          console.log('Server response status:', response.status, response.statusText);
+          
+          // Check if response is ok (status in the range 200-299)
+          if (!response.ok) {
+            throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+          }
+          
+          // Check if content type is JSON
+          const contentType = response.headers.get('content-type');
+          console.log('Response content type:', contentType);
+          
+          if (!contentType || !contentType.includes('application/json')) {
+            throw new Error(`Expected JSON but got ${contentType || 'unknown content type'}`);
+          }
+          
+          return response.json();
+        })
+        .then(data => {
+          // Clear the timeout since we got a response
+          clearTimeout(submissionTimeout);
+          
+          // Check if the response indicates an error
+          if (!data.success) {
+            console.error('Server returned error in JSON response:', data.message || 'Unknown error');
+            throw new Error(data.message || 'Server error occurred during evaluation');
+          }
+          
+          loadingContainer.classList.add('d-none');
+          resultContainer.classList.remove('d-none');
+          
+          // Force scroll to top to ensure results are visible
+          window.scrollTo(0, 0);
+          document.body.scrollTop = 0;
+          document.documentElement.scrollTop = 0;
+          
+          // Extra call to ensure test is really completed
+          forceMarkTestCompleted(csrfToken)
+            .then(() => console.log('Final force complete successful'))
+            .catch(e => console.error('Final force complete failed:', e));
+            
+          // Display result
+          const resultAlert = document.getElementById('result-alert');
+          const resultMessage = document.getElementById('result-message');
+          
+          // Clear previous classes
+          resultAlert.className = 'alert';
+          
+          if (data.passed) {
+            resultAlert.classList.add('alert-success');
+            resultMessage.textContent = 'Selamat! Anda lulus post-test ini.';
+            
+            if (data.level_up) {
+              resultMessage.textContent += ' Anda telah naik ke level berikutnya!';
+              
+              // Redirect to dashboard after 3 seconds to show the updated level
+              setTimeout(() => {
+                window.location.href = '{{ route("dashboard") }}?from_post_test=true&level_up=true';
+              }, 3000);
+            }
+          } else {
+            resultAlert.classList.add('alert-danger');
+            resultMessage.textContent = 'Maaf, Anda belum lulus post-test ini. Anda perlu mendapatkan minimal 70%.';
+            retryButton.classList.remove('d-none');
+          }
+          
+          document.getElementById('result-score').textContent = data.score;
+          document.getElementById('result-total-points').textContent = data.total_points;
+          document.getElementById('result-percentage').textContent = data.percentage;
+          document.getElementById('result-correct-count').textContent = data.correct_count;
+          document.getElementById('result-total-questions').textContent = data.total_questions;
+          
+          // Update progress bars
+          const scorePercentage = data.total_points > 0 ? (data.score / data.total_points) * 100 : 0;
+          const correctPercentage = data.total_questions > 0 ? (data.correct_count / data.total_questions) * 100 : 0;
+          
+          document.getElementById('score-progress').style.width = `${scorePercentage}%`;
+          document.getElementById('correct-progress').style.width = `${correctPercentage}%`;
+          
+          // Make sure result container is fully visible
+          resultContainer.style.display = 'block';
+          resultContainer.scrollIntoView({ behavior: 'auto', block: 'start' });
+          
+          // Reset test state in local storage
+          localStorage.removeItem(`${STORAGE_PREFIX}start_time`);
+          localStorage.removeItem(`${STORAGE_PREFIX}is_started`);
+          localStorage.removeItem(`${STORAGE_PREFIX}answers`);
+        })
+        .catch(error => {
+          // Clear the timeout since we got a response (even if it's an error)
+          clearTimeout(submissionTimeout);
+          
+          console.error('Error submitting test:', error);
+          
+          // Show error UI
+          loadingContainer.classList.add('d-none');
+          resultContainer.classList.remove('d-none');
+          
+          const resultAlert = document.getElementById('result-alert');
+          const resultMessage = document.getElementById('result-message');
+          
+          resultAlert.className = 'alert alert-warning';
+          resultMessage.textContent = 'Terjadi kesalahan koneksi ke server. Silakan coba lagi nanti.';
+          
+          // Show basic result with zeros instead of N/A
+          document.getElementById('result-score').textContent = '0';
+          document.getElementById('result-total-points').textContent = '{{ count($questions) }}';
+          document.getElementById('result-percentage').textContent = '0';
+          document.getElementById('result-correct-count').textContent = '0';
+          document.getElementById('result-total-questions').textContent = '{{ count($questions) }}';
+          
+          // Set progress bars to 0%
+          document.getElementById('score-progress').style.width = '0%';
+          document.getElementById('correct-progress').style.width = '0%';
+          
+          retryButton.classList.remove('d-none');
+          
+          // Reset test state in local storage
+          localStorage.removeItem(`${STORAGE_PREFIX}start_time`);
+          localStorage.removeItem(`${STORAGE_PREFIX}is_started`);
+          localStorage.removeItem(`${STORAGE_PREFIX}answers`);
+        });
       }
       
       // Keep only fullscreen mode active, remove other anti-cheating measures
@@ -1451,7 +1325,6 @@
         localStorage.removeItem(`${STORAGE_PREFIX}start_time`);
         localStorage.removeItem(`${STORAGE_PREFIX}is_started`);
         localStorage.removeItem(`${STORAGE_PREFIX}answers`);
-        localStorage.removeItem(`${STORAGE_PREFIX}warning_count`);
         
         // Reset variables
         warningCount = 0;
@@ -1476,7 +1349,7 @@
             'Accept': 'application/json'
           },
           body: JSON.stringify({
-            answers: [], // Make sure it's an array for Laravel validation
+            answers: {}, // Use an empty object
             language: '{{ $language ?? "id" }}',
             force_clear: true
           })
@@ -1573,8 +1446,8 @@
       
       // Handle beforeunload event to warn about leaving the page
       window.addEventListener('beforeunload', function(e) {
-        if (isTestActive) {
-          const message = 'Jika Anda meninggalkan halaman ini, tes akan dianggap sebagai kecurangan dan nilai Anda akan menjadi 0.';
+        if (testInProgress) {
+          const message = 'Jika Anda meninggalkan halaman ini, progres tes Anda mungkin tidak tersimpan.';
           e.returnValue = message;
           return message;
         }
@@ -1582,6 +1455,33 @@
       
       // Check if test already started
       checkTestStatus();
+      
+      // Add event listener for the "Kembali ke Pembelajaran" button
+      const backToLearningBtn = document.getElementById('back-to-learning-btn');
+      if (backToLearningBtn) {
+        backToLearningBtn.addEventListener('click', function(e) {
+          // Reset test state before navigating away
+          resetTestState();
+          
+          // Disable beforeunload warning
+          disableBeforeUnloadWarning();
+          
+          // Let the default navigation happen
+          // No need to prevent default
+        });
+      }
+      
+      // Add event listener for the "Coba Lagi" button
+      const retryBtn = document.getElementById('retry-button');
+      if (retryBtn) {
+        retryBtn.addEventListener('click', function(e) {
+          // Disable beforeunload warning
+          disableBeforeUnloadWarning();
+          
+          // Let the default navigation happen
+          // No need to prevent default
+        });
+      }
     });
   </script>
   @endpush

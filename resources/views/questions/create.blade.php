@@ -11,6 +11,47 @@
       </div>
     </div>
 
+    @if(Auth::user()->hasRole('teacher') && isset($teacherLanguageSettings) && is_countable($teacherLanguageSettings) && count($teacherLanguageSettings) > 0)
+    <div class="row mb-4">
+      <div class="col-md-12">
+        <div class="card shadow-sm">
+          <div class="card-header bg-info text-white">
+            <h5 class="mb-0">Pengaturan Bahasa & Level Anda</h5>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info">
+              <i class="fas fa-info-circle me-2"></i>
+              Anda hanya dapat membuat soal dengan bahasa dan level yang sesuai dengan pengaturan Anda.
+            </div>
+            
+            <div class="table-responsive">
+              <table class="table table-bordered">
+                <thead class="table-light">
+                  <tr>
+                    <th>Bahasa</th>
+                    <th>Level</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @foreach($teacherLanguageSettings as $setting)
+                  <tr>
+                    <td>{{ $setting['language'] }}</td>
+                    <td>
+                      <span class="badge rounded-pill bg-primary">
+                        {{ $setting['level'] }} - {{ $setting['level_name'] }}
+                      </span>
+                    </td>
+                  </tr>
+                  @endforeach
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    @endif
+
     @if ($errors->any())
     <div class="alert alert-danger">
       <ul class="mb-0">
@@ -68,9 +109,17 @@
                   <label for="level" class="form-label">Level</label>
                   <select name="level" id="level" class="form-select" required>
                     <option value="">Pilih Level</option>
-                    <option value="1" {{ old('level') == 1 ? 'selected' : '' }}>Level 1 (Beginner)</option>
-                    <option value="2" {{ old('level') == 2 ? 'selected' : '' }}>Level 2 (Intermediate)</option>
-                    <option value="3" {{ old('level') == 3 ? 'selected' : '' }}>Level 3 (Advanced)</option>
+                    @if(Auth::user()->hasRole('admin'))
+                      <option value="1" {{ old('level') == 1 ? 'selected' : '' }}>Level 1 (Beginner)</option>
+                      <option value="2" {{ old('level') == 2 ? 'selected' : '' }}>Level 2 (Intermediate)</option>
+                      <option value="3" {{ old('level') == 3 ? 'selected' : '' }}>Level 3 (Advanced)</option>
+                    @else
+                      @foreach($teacherLanguageSettings ?? [] as $setting)
+                        <option value="{{ $setting['level'] }}" {{ old('level') == $setting['level'] ? 'selected' : '' }}>
+                          Level {{ $setting['level'] }} ({{ $setting['level_name'] }})
+                        </option>
+                      @endforeach
+                    @endif
                   </select>
                   <!-- Hidden input for pretest -->
                   <input type="hidden" name="level_hidden" id="level_hidden" value="1">
@@ -90,8 +139,17 @@
                 <div class="col-md-4">
                   <label for="language" class="form-label">Bahasa</label>
                   <select name="language" id="language" class="form-select" required>
-                    <option value="id" {{ old('language') == 'id' ? 'selected' : '' }}>Indonesia</option>
-                    <option value="en" {{ old('language') == 'en' ? 'selected' : '' }}>English</option>
+                    @if(Auth::user()->hasRole('admin'))
+                      <option value="id" {{ old('language') == 'id' ? 'selected' : '' }}>Indonesia</option>
+                      <option value="en" {{ old('language') == 'en' ? 'selected' : '' }}>English</option>
+                      <option value="ru" {{ old('language') == 'ru' ? 'selected' : '' }}>Russian</option>
+                    @else
+                      @foreach($teacherLanguageSettings ?? [] as $setting)
+                        <option value="{{ $setting['language_code'] }}" {{ old('language') == $setting['language_code'] ? 'selected' : '' }}>
+                          {{ $setting['language'] }}
+                        </option>
+                      @endforeach
+                    @endif
                   </select>
                 </div>
               </div>
@@ -211,6 +269,43 @@
       const form = document.getElementById('questionForm');
       const submitBtn = document.getElementById('submitBtn');
       const pointsContainer = document.getElementById('points_container');
+      const languageSelect = document.getElementById('language');
+      const levelSelect = document.getElementById('level');
+      
+      // For teacher role only - set up language/level filtering
+      @if(Auth::user()->hasRole('teacher'))
+      // Store teacher language settings
+      const teacherSettings = @json($teacherLanguageSettings ?? []);
+      
+      // Filter level options based on selected language
+      languageSelect.addEventListener('change', function() {
+        const selectedLanguage = this.value;
+        
+        // Clear current options except the first one
+        while (levelSelect.options.length > 1) {
+          levelSelect.remove(1);
+        }
+        
+        // Add levels for the selected language
+        const filteredSettings = teacherSettings.filter(setting => setting.language_code === selectedLanguage);
+        filteredSettings.forEach(setting => {
+          const option = document.createElement('option');
+          option.value = setting.level;
+          option.textContent = `Level ${setting.level} (${setting.level_name})`;
+          levelSelect.appendChild(option);
+        });
+        
+        // If only one level is available, select it automatically
+        if (filteredSettings.length === 1) {
+          levelSelect.value = filteredSettings[0].level;
+        }
+      });
+      
+      // Trigger language change on page load if a language is selected
+      if (languageSelect.value) {
+        languageSelect.dispatchEvent(new Event('change'));
+      }
+      @endif
       
       // Debug - log when the page loads
       console.log('DOM Content Loaded');

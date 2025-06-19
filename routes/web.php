@@ -14,6 +14,10 @@ use App\Http\Controllers\TeacherController;
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\TeacherMaterialController;
 use App\Http\Controllers\MaterialQuizController;
+use App\Http\Controllers\AuthController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\ToolsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -159,10 +163,22 @@ Route::middleware(['auth'])->group(function () {
 });
 
 // Admin routes
-Route::prefix('admin')->name('admin.')->group(function () {
-    Route::get('/role-management', [AdminController::class, 'roleManagement'])->name('role.management');
-    Route::post('/role-management/{id}', [AdminController::class, 'updateRole'])->name('role.update');
+Route::prefix('admin')->middleware(['auth'])->group(function () {
+    // Only admin users can access these routes (checked in the controller)
+    // Admin role management
+    Route::get('/role-management', [AdminController::class, 'roleManagement'])->name('admin.role.management');
+    Route::post('/update-role/{id}', [AdminController::class, 'updateRole'])->name('admin.role.update');
+    
+    // Teacher and language settings
+    Route::get('/teacher-language-settings', [AdminController::class, 'teacherLanguageSettings'])->name('admin.teacher-language.settings');
+    Route::post('/teacher-language-settings', [AdminController::class, 'updateTeacherLanguageSettings'])->name('admin.teacher-language.update');
+    
+    // Post-test monitoring page
+    Route::get('/post-test-monitoring', [AdminController::class, 'postTestMonitoring'])->name('admin.post-test.monitoring');
 });
+
+// Post-test monitoring data endpoint - separate to avoid auth issues with AJAX
+Route::middleware(['auth'])->get('/admin/post-test-monitoring/data', [AdminController::class, 'getPostTestData'])->name('admin.post-test.data');
 
 // Auth routes (Laravel's built-in authentication)
 Auth::routes();

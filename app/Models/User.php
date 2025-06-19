@@ -213,4 +213,12 @@ class User extends Authenticatable
         // Check if all materials in this level have been completed
         return LearningMaterial::hasCompletedAllInLevel($this->id, $level, $language);
     }
+
+    /**
+     * Get the language levels assigned to this teacher.
+     */
+    public function teacherLanguages()
+    {
+        return $this->hasMany(TeacherLanguage::class, 'teacher_id');
+    }
 }

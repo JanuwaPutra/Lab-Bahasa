@@ -5,7 +5,7 @@
       <div class="row align-items-center">
         <div class="col-md-8">
           <h4 class="alert-heading"><i class="fas fa-exclamation-triangle me-2"></i>Mulai dengan Pretest!</h4>
-          <p>Untuk mengakses semua fitur Lab Bahasa AI, Anda perlu menyelesaikan pretest terlebih dahulu. Pretest ini akan menentukan level kemampuan bahasa Anda dan menyediakan materi pembelajaran yang sesuai dengan level tersebut.</p>
+          <p>Untuk mengakses semua fitur Lab Bahasa AI, Anda perlu menyelesaikan pretest terlebih dahulu. Pretest ini akan menentukan level kemampuan bahasa Anda (Level 1-Beginner, Level 2-Intermediate, atau Level 3-Advanced) dan menyediakan materi pembelajaran sesuai level tersebut. Setelah mempelajari materi, Anda dapat mengambil post-test untuk naik ke level berikutnya dan membuka materi pembelajaran yang lebih lanjut.</p>
         </div>
         <div class="col-md-4 text-end">
           <a href="{{ route('pretest.language', ['language' => session('language', 'id')]) }}" class="btn btn-success btn-lg">Mulai Pretest Sekarang</a>

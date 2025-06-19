@@ -8,37 +8,6 @@
     .word-count {
       font-weight: bold;
     }
-    /* Fullscreen mode styles */
-    body.fullscreen-mode {
-      overflow: hidden;
-    }
-    .fullscreen-container {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 9999;
-      background-color: #fff;
-      overflow-y: auto;
-    }
-    .warning-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background-color: rgba(220, 53, 69, 0.95);
-      z-index: 10000;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      color: white;
-      font-size: 1.5rem;
-      text-align: center;
-      padding: 2rem;
-    }
     /* Question navigation styles */
     .question-nav {
       display: flex;
@@ -342,13 +311,13 @@
       const TEST_TIME = {{ isset($timeLimit) ? $timeLimit * 60 : 30 * 60 }}; // minutes in seconds
       const STORAGE_PREFIX = 'pretest_';
       
-      // Anti-cheating variables
-      let warningCount = 0;
-      const MAX_WARNINGS = 2;
-      let isTestActive = false;
-      let isFullscreenMode = false;
-      let visibilityWarningShown = false;
-      let warningOverlay = null;
+      // Test state tracking
+      let testInProgress = false;
+      
+      // Function to disable beforeunload warning
+      function disableBeforeUnloadWarning() {
+        testInProgress = false;
+      }
       
       // Error handling variables
       let serverErrorCount = 0;
@@ -489,19 +458,48 @@
         localStorage.removeItem(`${STORAGE_PREFIX}start_time`);
         localStorage.removeItem(`${STORAGE_PREFIX}is_started`);
         localStorage.removeItem(`${STORAGE_PREFIX}answers`);
-        localStorage.removeItem(`${STORAGE_PREFIX}warning_count`);
         
-        // Reset variables
-        warningCount = 0;
-        isTestActive = false;
-        isFullscreenMode = false;
-        visibilityWarningShown = false;
+        // Reset any form elements
+        const formElements = document.querySelectorAll('input[type="radio"], input[type="text"], textarea');
+        formElements.forEach(element => {
+          if (element.type === 'radio') {
+            element.checked = false;
+          } else {
+            element.value = '';
+          }
+        });
         
-        // Remove warning overlay if exists
-        if (warningOverlay && warningOverlay.parentNode) {
-          warningOverlay.parentNode.removeChild(warningOverlay);
-          warningOverlay = null;
+        // Reset word counts for essays
+        document.querySelectorAll('.word-count').forEach(element => {
+          element.textContent = '0';
+        });
+        
+        // Reset navigation
+        document.querySelectorAll('.question-nav-item').forEach(item => {
+          item.classList.remove('answered');
+          item.classList.remove('active');
+          // Reset the first item to active
+          if (item.getAttribute('data-question-index') === '0') {
+            item.classList.add('active');
+          }
+        });
+        
+        // Reset current question index
+        currentQuestionIndex = 0;
+        
+        // Reset question counter
+        if (questionCounter) {
+          questionCounter.textContent = `1 / ${totalQuestions}`;
         }
+        
+        // Show first question, hide others
+        questionItems.forEach((item, index) => {
+          if (index === 0) {
+            item.classList.remove('d-none');
+          } else {
+            item.classList.add('d-none');
+          }
+        });
         
         // Juga reset data jawaban di server
         // Force clear parameter prevents redirect
@@ -518,13 +516,26 @@
             force_clear: true
           })
         })
-        .then(handleServerResponse)
+        .then(response => {
+          // Check if response is ok (status in the range 200-299)
+          if (!response.ok) {
+            throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+          }
+          
+          // Check if content type is JSON
+          const contentType = response.headers.get('content-type');
+          if (!contentType || !contentType.includes('application/json')) {
+            throw new Error(`Expected JSON but got ${contentType || 'unknown content type'}`);
+          }
+          
+          return response.json();
+        })
         .then(data => {
           console.log('Answers cleared on server');
           serverErrorCount = 0; // Reset error count on success
         })
         .catch(error => {
-          handleServerError(error, 'clearing answers');
+          console.error('Error clearing answers:', error);
           // Continue anyway - don't block the user experience
         });
       }
@@ -535,6 +546,9 @@
         testCard.classList.remove('d-none');
         timerCard.classList.remove('d-none');
         document.getElementById('question-nav-card').classList.remove('d-none');
+        
+        // Set test in progress flag
+        testInProgress = true;
         
         // Hide information and tips cards
         const infoCard = document.querySelector('.card:has(.card-header.bg-info)');
@@ -552,7 +566,6 @@
           localStorage.setItem(`${STORAGE_PREFIX}start_time`, currentTime);
           localStorage.setItem(`${STORAGE_PREFIX}is_started`, 'true');
           localStorage.setItem(`${STORAGE_PREFIX}answers`, JSON.stringify({}));
-          localStorage.setItem(`${STORAGE_PREFIX}warning_count`, '0');
           
           // Juga simpan waktu mulai ke server
           fetch('{{ route('pretest.save-answers') }}', {
@@ -602,344 +615,10 @@
                 }
               });
           });
-        } else {
-          // Restore warning count if exists
-          const savedWarningCount = localStorage.getItem(`${STORAGE_PREFIX}warning_count`);
-          if (savedWarningCount) {
-            warningCount = parseInt(savedWarningCount);
-          }
         }
-        
-        // Setup anti-cheating measures but don't enter fullscreen yet
-        setupAntiCheating();
         
         startTimer();
         updateNavigation();
-      }
-      
-      // Setup anti-cheating measures without entering fullscreen
-      function setupAntiCheating() {
-        isTestActive = true;
-        
-        // Add event listeners for anti-cheating detection
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        window.addEventListener('blur', handleWindowBlur);
-        document.addEventListener('keydown', handleKeyDown);
-        window.addEventListener('resize', checkFullscreenStatus);
-        
-        // Disable right-click
-        document.addEventListener('contextmenu', preventDefaultAction);
-        
-        // Disable selection
-        document.addEventListener('selectstart', preventDefaultAction);
-        
-        // Disable copying
-        document.addEventListener('copy', preventDefaultAction);
-        
-        // Check fullscreen status periodically
-        setInterval(checkFullscreenStatus, 1000);
-      }
-      
-      // Disable anti-cheating measures
-      function disableAntiCheating() {
-        isTestActive = false;
-        
-        // Remove event listeners first
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        window.removeEventListener('blur', handleWindowBlur);
-        document.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('resize', checkFullscreenStatus);
-        document.removeEventListener('contextmenu', preventDefaultAction);
-        document.removeEventListener('selectstart', preventDefaultAction);
-        document.removeEventListener('copy', preventDefaultAction);
-        
-        // Exit fullscreen mode - do this after removing event listeners
-        try {
-          exitFullscreenMode();
-        } catch (error) {
-          console.error('Error exiting fullscreen:', error);
-        }
-      }
-      
-      // Enter fullscreen mode
-      function enterFullscreenMode() {
-        const container = document.getElementById('pretest-container');
-        if (!container) return;
-        
-        // Create fullscreen container
-        const fullscreenContainer = document.createElement('div');
-        fullscreenContainer.id = 'fullscreen-wrapper';
-        fullscreenContainer.className = 'fullscreen-container';
-        
-        // Move test content to fullscreen container
-        document.body.appendChild(fullscreenContainer);
-        fullscreenContainer.appendChild(container);
-        
-        // Add fullscreen class to body
-        document.body.classList.add('fullscreen-mode');
-        
-        // Request browser fullscreen with options to prevent ESC key from exiting
-        try {
-          // Try to use newer options to lock keyboard
-          if (document.documentElement.requestFullscreen) {
-            document.documentElement.requestFullscreen().catch(error => {
-              console.error('Standard fullscreen request failed:', error);
-            });
-          } else if (document.documentElement.mozRequestFullScreen) {
-            document.documentElement.mozRequestFullScreen();
-          } else if (document.documentElement.webkitRequestFullscreen) {
-            document.documentElement.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
-          } else if (document.documentElement.msRequestFullscreen) {
-            document.documentElement.msRequestFullscreen();
-          }
-        } catch (error) {
-          console.error('Fullscreen error:', error);
-        }
-        
-        isFullscreenMode = true;
-      }
-      
-      // Exit fullscreen mode
-      function exitFullscreenMode() {
-        const container = document.getElementById('pretest-container');
-        const wrapper = document.getElementById('fullscreen-wrapper');
-        
-        // First check if we're actually in fullscreen mode
-        const isCurrentlyFullscreen = !!(
-          document.fullscreenElement ||
-          document.mozFullScreenElement ||
-          document.webkitFullscreenElement ||
-          document.msFullscreenElement
-        );
-        
-        if (isCurrentlyFullscreen) {
-          try {
-            // Exit browser fullscreen
-            if (document.exitFullscreen) {
-              document.exitFullscreen().catch(error => {
-                console.error('Error exiting fullscreen:', error);
-              });
-            } else if (document.mozCancelFullScreen) {
-              document.mozCancelFullScreen();
-            } else if (document.webkitExitFullscreen) {
-              document.webkitExitFullscreen();
-            } else if (document.msExitFullscreen) {
-              document.msExitFullscreen();
-            }
-          } catch (error) {
-            console.error('Error exiting fullscreen:', error);
-          }
-        }
-        
-        // Move content back regardless of fullscreen state
-        if (container && wrapper) {
-          try {
-            // Move test content back to original position
-            wrapper.parentNode.insertBefore(container, wrapper);
-            wrapper.remove();
-          } catch (error) {
-            console.error('Error moving content back:', error);
-          }
-        }
-        
-        // Remove fullscreen class from body
-        document.body.classList.remove('fullscreen-mode');
-        
-        isFullscreenMode = false;
-      }
-      
-      // Check fullscreen status
-      function checkFullscreenStatus() {
-        if (!isTestActive) return;
-        
-        const isCurrentlyFullscreen = !!(
-          document.fullscreenElement ||
-          document.mozFullScreenElement ||
-          document.webkitFullscreenElement ||
-          document.msFullscreenElement
-        );
-        
-        // Only show warning if we were in fullscreen and now we're not
-        if (isFullscreenMode && !isCurrentlyFullscreen) {
-          isFullscreenMode = false; // Update to prevent multiple warnings
-          showCheatingWarning('Anda keluar dari mode fullscreen. Ini dianggap sebagai upaya kecurangan.');
-        }
-      }
-      
-      // Handle visibility change (tab switching)
-      function handleVisibilityChange() {
-        if (!isTestActive) return;
-        
-        if (document.visibilityState === 'hidden') {
-          visibilityWarningShown = true;
-          // User switched tabs or minimized window
-          showCheatingWarning('Anda beralih ke tab/aplikasi lain. Ini dianggap sebagai upaya kecurangan.');
-        }
-      }
-      
-      // Handle window blur (clicking outside the window)
-      function handleWindowBlur() {
-        if (!isTestActive || visibilityWarningShown) return;
-        
-        // User clicked outside the window
-        showCheatingWarning('Anda mengakses aplikasi lain. Ini dianggap sebagai upaya kecurangan.');
-        
-        // Reset visibility warning flag
-        visibilityWarningShown = false;
-      }
-      
-      // Handle keyboard shortcuts
-      function handleKeyDown(e) {
-        if (!isTestActive) return;
-        
-        // Only capture keyboard shortcuts but NOT ESC key
-        // Let the fullscreen event handler deal with ESC key to prevent double counting
-        if ((e.altKey || e.ctrlKey || e.metaKey || e.key === 'F12') && e.key !== 'Escape') {
-          e.preventDefault();
-          showCheatingWarning('Penggunaan shortcut keyboard terdeteksi. Ini dianggap sebagai upaya kecurangan.');
-          return false;
-        }
-      }
-      
-      // Prevent default action
-      function preventDefaultAction(e) {
-        if (isTestActive) {
-          e.preventDefault();
-          return false;
-        }
-      }
-      
-      // Show cheating warning
-      function showCheatingWarning(message) {
-        // Get current warning count from storage if available
-        let currentWarningCount = parseInt(localStorage.getItem(`${STORAGE_PREFIX}warning_count`)) || 0;
-        
-        // Only increment if not already at max
-        if (currentWarningCount < MAX_WARNINGS) {
-          currentWarningCount++;
-          warningCount = currentWarningCount;
-          // Save warning count to localStorage
-          localStorage.setItem(`${STORAGE_PREFIX}warning_count`, currentWarningCount.toString());
-        }
-        
-        // Remove any existing warning overlay first to prevent stacking
-        if (warningOverlay && warningOverlay.parentNode) {
-          warningOverlay.parentNode.removeChild(warningOverlay);
-          warningOverlay = null;
-        }
-        
-        // Create new warning overlay
-        warningOverlay = document.createElement('div');
-        warningOverlay.className = 'warning-overlay';
-        document.body.appendChild(warningOverlay);
-        
-        // Update warning message
-        warningOverlay.innerHTML = `
-          <h2><i class="fas fa-exclamation-triangle mb-3"></i></h2>
-          <h3>PERINGATAN!</h3>
-          <p>${message}</p>
-          <p>Peringatan ${Math.min(currentWarningCount, MAX_WARNINGS)} dari ${MAX_WARNINGS}</p>
-          <p class="mt-3">${currentWarningCount >= MAX_WARNINGS ? 'Anda telah mencapai batas maksimum peringatan. Tes akan disubmit dengan nilai 0.' : 'Jika terjadi sekali lagi, tes akan otomatis disubmit dengan nilai 0.'}</p>
-          ${currentWarningCount < MAX_WARNINGS ? '<button id="continue-test-btn" class="btn btn-light mt-3">Lanjutkan Tes</button>' : ''}
-        `;
-        
-        // Show warning
-        warningOverlay.style.display = 'flex';
-        
-        // Add event listener to continue button if available
-        const continueButton = document.getElementById('continue-test-btn');
-        if (continueButton) {
-          continueButton.addEventListener('click', function() {
-            if (warningOverlay) {
-              warningOverlay.style.display = 'none';
-              
-              // Remove from DOM completely to prevent stacking
-              if (warningOverlay.parentNode) {
-                warningOverlay.parentNode.removeChild(warningOverlay);
-                warningOverlay = null;
-              }
-            }
-            
-            // Re-enter fullscreen directly from user interaction (button click)
-            try {
-              enterFullscreenMode();
-            } catch (error) {
-              console.error('Error re-entering fullscreen from continue button:', error);
-            }
-          });
-        }
-        
-        // If max warnings reached, auto-submit with zero score
-        if (currentWarningCount >= MAX_WARNINGS) {
-          setTimeout(() => {
-            submitTestWithZeroScore();
-          }, 3000);
-        }
-      }
-      
-      // Submit test with zero score due to cheating
-      function submitTestWithZeroScore() {
-        // Remove any existing warning overlay first
-        if (warningOverlay && warningOverlay.parentNode) {
-          warningOverlay.parentNode.removeChild(warningOverlay);
-          warningOverlay = null;
-        }
-        
-        // Create new warning overlay for submission message
-        warningOverlay = document.createElement('div');
-        warningOverlay.className = 'warning-overlay';
-        document.body.appendChild(warningOverlay);
-        
-        // Update warning overlay
-        warningOverlay.innerHTML = `
-          <h2><i class="fas fa-ban mb-3"></i></h2>
-          <h3>KECURANGAN TERDETEKSI!</h3>
-          <p>Anda telah mencapai batas maksimum peringatan.</p>
-          <p>Tes akan disubmit dengan nilai 0.</p>
-          <div class="spinner-border text-light mt-3" role="status">
-            <span class="visually-hidden">Loading...</span>
-          </div>
-        `;
-        
-        // Show warning
-        warningOverlay.style.display = 'flex';
-        
-        // Disable anti-cheating first
-        try {
-          disableAntiCheating();
-        } catch (error) {
-          console.error('Error disabling anti-cheating:', error);
-        }
-        
-        // Reset test state completely
-        resetTestState();
-        
-        // Submit with zero score
-        fetch('{{ route("pretest.evaluate") }}', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': csrfToken,
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({ 
-            answers: {},
-            language: '{{ $language ?? "id" }}',
-            cheating_detected: true
-          })
-        })
-        .then(handleServerResponse)
-        .then(data => {
-          // Redirect to result page
-          window.location.href = '{{ route("dashboard") }}?from_pretest=true&cheating=true';
-        })
-        .catch(error => {
-          handleServerError(error, 'submitting zero score')
-            .then(() => {
-              // Redirect anyway
-              window.location.href = '{{ route("dashboard") }}?from_pretest=true&cheating=true';
-            });
-        });
       }
       
       // Update navigation buttons and question counter
@@ -973,7 +652,7 @@
         
         if (remaining <= 0) {
           // Time's up, submit the test
-          submitTest();
+          submitTest(true);
           return;
         }
         
@@ -996,7 +675,7 @@
           if (remaining <= 0) {
             clearInterval(window.timerInterval);
             window.timerInterval = null;
-            submitTest();
+            submitTest(true);
           }
         }, 1000);
       }
@@ -1062,7 +741,7 @@
                 if (remaining <= 0) {
                   clearInterval(window.timerInterval);
                   window.timerInterval = null;
-                  submitTest();
+                  submitTest(true);
                 }
               }
             }
@@ -1103,13 +782,6 @@
         startTestBtn.addEventListener('click', () => {
           // Start the test
           startTest(true);
-          
-          // Request fullscreen directly from the user interaction
-          try {
-            enterFullscreenMode();
-          } catch (error) {
-            console.error('Error entering fullscreen from button click:', error);
-          }
         });
       }
       
@@ -1194,6 +866,9 @@
         // Save to localStorage as backup
         localStorage.setItem(`${STORAGE_PREFIX}answers`, JSON.stringify(answers));
         
+        // Check if this is an empty submission
+        const isEmptySubmission = Object.keys(answers).length === 0;
+        
         // Save to server untuk persistensi
         fetch('{{ route('pretest.save-answers') }}', {
           method: 'POST',
@@ -1204,7 +879,8 @@
           },
           body: JSON.stringify({
             answers: answers,
-            language: '{{ $language ?? "id" }}'
+            language: '{{ $language ?? "id" }}',
+            empty_submission: isEmptySubmission
           })
         })
         .then(handleServerResponse)
@@ -1219,8 +895,11 @@
       }
       
       // Submit test
-      function submitTest() {
+      function submitTest(isTimeUp = false) {
         saveAnswers();
+        
+        // Clear test in progress flag
+        testInProgress = false;
         
         questionsContainer.classList.add('d-none');
         loadingContainer.classList.remove('d-none');
@@ -1239,33 +918,40 @@
         // Get the answers data
         const answers = JSON.parse(localStorage.getItem(`${STORAGE_PREFIX}answers`) || '{}');
         
-        // Keep fullscreen mode active, but remove other anti-cheating measures
-        keepFullscreenOnlyMode();
+        // Set a timeout to handle cases where the fetch might hang
+        const submissionTimeout = setTimeout(() => {
+          console.warn('Submission request timed out');
+          loadingContainer.classList.add('d-none');
+          resultContainer.classList.remove('d-none');
+          
+          // Display basic result with default values
+          document.getElementById('result-level').textContent = "1";
+          document.getElementById('result-score').textContent = "0";
+          document.getElementById('result-total-points').textContent = totalQuestions.toString();
+          document.getElementById('result-percentage').textContent = "0";
+          document.getElementById('result-correct-count').textContent = "0";
+          document.getElementById('result-total-questions').textContent = totalQuestions.toString();
+          
+          // Update progress bars
+          document.getElementById('score-progress').style.width = "0%";
+          document.getElementById('correct-progress').style.width = "0%";
+          
+          // Show error message
+          alert('Terjadi kesalahan saat mengevaluasi jawaban. Silakan coba lagi nanti.');
+        }, 20000); // 20 seconds timeout
         
-        // Reset test state completely but keep fullscreen
-        resetTestStateKeepFullscreen();
+        // Ensure we're sending a valid data structure (empty object if no answers)
+        const submittableAnswers = Object.keys(answers).length > 0 ? answers : {};
+        const isEmptySubmission = Object.keys(answers).length === 0;
         
-        // Check if we have any answers
-        const hasAnswers = Object.keys(answers).length > 0;
-        
-        // If we've had too many server errors or no answers, show a warning
-        if (serverErrorCount >= MAX_SERVER_ERRORS || !hasAnswers) {
-          if (!hasAnswers) {
-            // If no answers, show warning and allow user to go back
-            loadingContainer.classList.add('d-none');
-            questionsContainer.classList.remove('d-none');
-            
-            alert('Anda belum menjawab pertanyaan apapun. Silakan jawab setidaknya satu pertanyaan sebelum mengirimkan tes.');
-            
-            // Re-enable the submit button
-            const submitBtn = document.querySelector('.btn-submit');
-            if (submitBtn) {
-              submitBtn.disabled = false;
-            }
-            
-            return;
-          }
-        }
+        console.log('Submitting test with parameters:', {
+          answers: submittableAnswers,
+          language: '{{ $language ?? "id" }}',
+          start_time: localStorage.getItem(`${STORAGE_PREFIX}start_time`),
+          duration: getElapsedTimeInMinutes(),
+          time_expired: isTimeUp,
+          empty_submission: isEmptySubmission
+        });
         
         // Submit answers via AJAX
         fetch('{{ route("pretest.evaluate") }}', {
@@ -1276,13 +962,59 @@
             'Accept': 'application/json'
           },
           body: JSON.stringify({ 
-            answers: answers,
+            answers: submittableAnswers,
             language: '{{ $language ?? "id" }}',
             start_time: localStorage.getItem(`${STORAGE_PREFIX}start_time`),
-            duration: getElapsedTimeInMinutes()
+            duration: getElapsedTimeInMinutes(),
+            time_expired: isTimeUp,
+            empty_submission: isEmptySubmission
           })
         })
-        .then(handleServerResponse)
+        .then(response => {
+          // Clear the timeout since we got a response
+          clearTimeout(submissionTimeout);
+          
+          // Check if response is ok (status in the range 200-299)
+          if (!response.ok) {
+            console.error(`Server returned ${response.status}: ${response.statusText}`);
+            return response.text().then(text => {
+              try {
+                // Try to parse as JSON
+                const jsonData = JSON.parse(text);
+                console.error('Error response data:', jsonData);
+                
+                // If this is a validation error but we have an empty submission with time expired,
+                // we should still show results with a score of 0
+                if (response.status === 422 && isEmptySubmission && isTimeUp) {
+                  console.log('Empty submission with time expired, showing default results');
+                  return {
+                    level: 1,
+                    score: 0,
+                    total_points: totalQuestions,
+                    percentage: 0,
+                    passed: false,
+                    correct_count: 0,
+                    total_questions: totalQuestions,
+                    language: '{{ $language ?? "id" }}'
+                  };
+                }
+                
+                throw new Error(`${response.status}: ${jsonData.message || response.statusText}`);
+              } catch (e) {
+                // If not JSON, throw with the text
+                throw new Error(`${response.status}: ${response.statusText} - ${text}`);
+              }
+            });
+          }
+          
+          // Check if content type is JSON
+          const contentType = response.headers.get('content-type');
+          if (!contentType || !contentType.includes('application/json')) {
+            throw new Error(`Expected JSON but got ${contentType || 'unknown content type'}`);
+          }
+          
+          return response.json();
+        })
         .then(data => {
           loadingContainer.classList.add('d-none');
           resultContainer.classList.remove('d-none');
@@ -1307,113 +1039,59 @@
           document.getElementById('score-progress').style.width = `${scorePercentage}%`;
           document.getElementById('correct-progress').style.width = `${correctPercentage}%`;
           
-          // Make sure result container is fully visible within fullscreen mode
+          // Make sure result container is fully visible
           resultContainer.style.display = 'block';
           resultContainer.scrollIntoView({ behavior: 'auto', block: 'start' });
+          
+          // Reset test state in local storage
+          localStorage.removeItem(`${STORAGE_PREFIX}start_time`);
+          localStorage.removeItem(`${STORAGE_PREFIX}is_started`);
+          localStorage.removeItem(`${STORAGE_PREFIX}answers`);
           
           serverErrorCount = 0; // Reset error count on success
         })
         .catch(error => {
-          handleServerError(error, 'submitting test')
-            .then(() => {
-              // If we've had too many server errors, try to handle locally
-              if (serverErrorCount >= MAX_SERVER_ERRORS) {
-                // Create a basic result based on client-side data
-                loadingContainer.classList.add('d-none');
-                resultContainer.classList.remove('d-none');
-                
-                // Set default values for results
-                document.getElementById('result-level').textContent = "1";
-                document.getElementById('result-score').textContent = "0";
-                document.getElementById('result-total-points').textContent = totalQuestions.toString();
-                document.getElementById('result-percentage').textContent = "0";
-                document.getElementById('result-correct-count').textContent = "0";
-                document.getElementById('result-total-questions').textContent = totalQuestions.toString();
-                
-                // Set progress bars to 0
-                document.getElementById('score-progress').style.width = "0%";
-                document.getElementById('correct-progress').style.width = "0%";
-                
-                // Show a warning
-                alert('Tidak dapat menghubungi server untuk mengevaluasi jawaban. Silakan simpan jawaban Anda dan coba lagi nanti.');
-                
-                // Make sure result container is visible
-                resultContainer.style.display = 'block';
-                resultContainer.scrollIntoView({ behavior: 'auto', block: 'start' });
-              } else {
-                // Show error and allow retry
-                loadingContainer.classList.add('d-none');
-                questionsContainer.classList.remove('d-none');
-                
-                alert('Terjadi kesalahan saat mengirim data. Silakan coba lagi. Jika masalah berlanjut, simpan jawaban Anda dan muat ulang halaman.');
-                
-                // Re-enable the submit button
-                const submitBtn = document.querySelector('.btn-submit');
-                if (submitBtn) {
-                  submitBtn.disabled = false;
-                }
-              }
-            });
+          // Clear the timeout since we got a response (even if it's an error)
+          clearTimeout(submissionTimeout);
+          
+          console.error('Error submitting test:', error);
+          
+          // Show error and display fallback results
+          loadingContainer.classList.add('d-none');
+          resultContainer.classList.remove('d-none');
+          
+          // Display basic result with default values
+          document.getElementById('result-level').textContent = "1";
+          document.getElementById('result-score').textContent = "0";
+          document.getElementById('result-total-points').textContent = totalQuestions.toString();
+          document.getElementById('result-percentage').textContent = "0";
+          document.getElementById('result-correct-count').textContent = "0";
+          document.getElementById('result-total-questions').textContent = totalQuestions.toString();
+          
+          // Update progress bars
+          document.getElementById('score-progress').style.width = "0%";
+          document.getElementById('correct-progress').style.width = "0%";
+          
+          // Show error message
+          alert('Terjadi kesalahan saat mengevaluasi jawaban. Silakan coba lagi nanti.');
+          
+          // Reset test state in local storage
+          localStorage.removeItem(`${STORAGE_PREFIX}start_time`);
+          localStorage.removeItem(`${STORAGE_PREFIX}is_started`);
+          localStorage.removeItem(`${STORAGE_PREFIX}answers`);
         });
       }
       
-      // Keep only fullscreen mode active, remove other anti-cheating measures
-      function keepFullscreenOnlyMode() {
-        // Remove event listeners for cheating detection
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        window.removeEventListener('blur', handleWindowBlur);
-        document.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('resize', checkFullscreenStatus);
-        document.removeEventListener('contextmenu', preventDefaultAction);
-        document.removeEventListener('selectstart', preventDefaultAction);
-        document.removeEventListener('copy', preventDefaultAction);
+      // Calculate elapsed time in minutes
+      function getElapsedTimeInMinutes() {
+        const startTime = parseInt(localStorage.getItem(`${STORAGE_PREFIX}start_time`) || '0');
+        if (!startTime) return 0.1; // Default minimum
         
-        // Keep the fullscreen mode active
-        isTestActive = false;
-      }
-      
-      // Reset test state but keep fullscreen mode active
-      function resetTestStateKeepFullscreen() {
-        // Clear test data from local storage
-        localStorage.removeItem(`${STORAGE_PREFIX}start_time`);
-        localStorage.removeItem(`${STORAGE_PREFIX}is_started`);
-        localStorage.removeItem(`${STORAGE_PREFIX}answers`);
-        localStorage.removeItem(`${STORAGE_PREFIX}warning_count`);
+        const currentTime = Math.floor(Date.now() / 1000);
+        const elapsedSeconds = currentTime - startTime;
         
-        // Reset variables
-        warningCount = 0;
-        visibilityWarningShown = false;
-        
-        // Remove warning overlay if exists
-        if (warningOverlay && warningOverlay.parentNode) {
-          warningOverlay.parentNode.removeChild(warningOverlay);
-          warningOverlay = null;
-        }
-        
-        // Juga reset data jawaban di server
-        // Force clear parameter prevents redirect
-        fetch('{{ route('pretest.save-answers') }}', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': csrfToken,
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            answers: {},
-            language: '{{ $language ?? "id" }}',
-            force_clear: true
-          })
-        })
-        .then(handleServerResponse)
-        .then(data => {
-          console.log('Answers cleared on server while keeping fullscreen');
-          serverErrorCount = 0; // Reset error count on success
-        })
-        .catch(error => {
-          handleServerError(error, 'clearing answers');
-          // Continue anyway - don't block the user experience
-        });
+        // Ensure we don't return a negative value
+        return Math.max(0.05, (elapsedSeconds / 60)).toFixed(2); // In minutes with 2 decimal places
       }
       
       // Restore saved answers
@@ -1472,23 +1150,22 @@
       
       // Handle beforeunload event to warn about leaving the page
       window.addEventListener('beforeunload', function(e) {
-        if (isTestActive) {
-          const message = 'Jika Anda meninggalkan halaman ini, tes akan dianggap sebagai kecurangan dan nilai Anda akan menjadi 0.';
+        if (testInProgress) {
+          const message = 'Jika Anda meninggalkan halaman ini, progres tes Anda mungkin tidak tersimpan.';
           e.returnValue = message;
           return message;
         }
       });
       
-      // Calculate elapsed time in minutes
-      function getElapsedTimeInMinutes() {
-        const startTime = parseInt(localStorage.getItem(`${STORAGE_PREFIX}start_time`) || '0');
-        if (!startTime) return 0.1; // Default minimum
-        
-        const currentTime = Math.floor(Date.now() / 1000);
-        const elapsedSeconds = currentTime - startTime;
-        
-        // Ensure we don't return a negative value
-        return Math.max(0.05, (elapsedSeconds / 60)).toFixed(2); // In minutes with 2 decimal places
+      // Add event listener for the "Continue" button
+      if (continueButton) {
+        continueButton.addEventListener('click', function(e) {
+          // Disable beforeunload warning
+          disableBeforeUnloadWarning();
+          
+          // Let the default navigation happen
+          // No need to prevent default
+        });
       }
       
       // Check if test already started

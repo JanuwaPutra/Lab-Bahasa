@@ -24,6 +24,66 @@
       </div>
     </div>
 
+    @if(Auth::user()->hasRole('teacher'))
+    <div class="row mb-4">
+      <div class="col-md-12">
+        <div class="card shadow-sm">
+          <div class="card-header bg-info text-white">
+            <h5 class="mb-0">Pengaturan Bahasa & Level Anda</h5>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info">
+              <i class="fas fa-info-circle me-2"></i>
+              Anda hanya dapat melihat dan mengelola soal dengan bahasa dan level yang sesuai dengan pengaturan Anda.
+            </div>
+            
+            @php
+              $teacherLanguages = \App\Models\TeacherLanguage::where('teacher_id', Auth::id())
+                ->get()
+                ->map(function($setting) {
+                    $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
+                    $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+                    
+                    return [
+                        'language' => $languages[$setting->language] ?? $setting->language,
+                        'level' => $setting->level,
+                        'level_name' => $levels[$setting->level] ?? 'Unknown'
+                    ];
+                });
+            @endphp
+            
+            <div class="table-responsive">
+              <table class="table table-bordered">
+                <thead class="table-light">
+                  <tr>
+                    <th>Bahasa</th>
+                    <th>Level</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @forelse($teacherLanguages as $setting)
+                  <tr>
+                    <td>{{ $setting['language'] }}</td>
+                    <td>
+                      <span class="badge rounded-pill bg-primary">
+                        {{ $setting['level'] }} - {{ $setting['level_name'] }}
+                      </span>
+                    </td>
+                  </tr>
+                  @empty
+                  <tr>
+                    <td colspan="2" class="text-center">Tidak ada pengaturan bahasa. Hubungi admin untuk mengatur akses bahasa dan level Anda.</td>
+                  </tr>
+                  @endforelse
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    @endif
+
     <div class="row mb-4">
       <div class="col-md-12">
         <div class="card">
@@ -32,7 +92,7 @@
           </div>
           <div class="card-body">
             <form action="{{ route('questions.index') }}" method="GET" class="row g-3">
-              <div class="col-md-6">
+              <div class="col-md-3">
                 <label for="type" class="form-label">Tipe Tes</label>
                 <select name="type" id="type" class="form-select" onchange="this.form.submit()">
                   <option value="pretest" {{ $type == 'pretest' ? 'selected' : '' }}>Pretest</option>
@@ -44,7 +104,24 @@
                   <option value="grammar" {{ $type == 'grammar' ? 'selected' : '' }}>Grammar Test</option>
                 </select>
               </div>
-              <div class="col-md-6 d-flex align-items-end">
+              <div class="col-md-3">
+                <label for="filter_language" class="form-label">Bahasa</label>
+                <select name="language" id="filter_language" class="form-select" onchange="this.form.submit()">
+                  @foreach($availableLanguages as $lang)
+                  <option value="{{ $lang['code'] }}" {{ $language == $lang['code'] ? 'selected' : '' }}>{{ $lang['name'] }}</option>
+                  @endforeach
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label for="filter_level" class="form-label">Level</label>
+                <select name="level" id="filter_level" class="form-select" onchange="this.form.submit()">
+                  <option value="">Semua Level</option>
+                  @foreach($availableLevels as $lvl)
+                  <option value="{{ $lvl }}" {{ isset($level) && $level == $lvl ? 'selected' : '' }}>Level {{ $lvl }} ({{ $levelNames[$lvl] ?? '' }})</option>
+                  @endforeach
+                </select>
+              </div>
+              <div class="col-md-3 d-flex align-items-end">
                 <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#testSettingsModal">
                   <i class="fas fa-clock me-1"></i> Pengaturan Waktu Ujian
                 </button>
@@ -177,6 +254,50 @@
   @push('scripts')
   <script>
     document.addEventListener('DOMContentLoaded', function() {
+      // For teacher role only - set up language/level filtering
+      @if(Auth::user()->hasRole('teacher'))
+      const languageSelect = document.getElementById('filter_language');
+      const levelSelect = document.getElementById('filter_level');
+      
+      // Store teacher language settings
+      const teacherSettings = @json($teacherLanguages ?? []);
+      
+      // Filter level options based on selected language
+      languageSelect.addEventListener('change', function() {
+        // Don't submit form yet - we'll do it after updating level options
+        event.preventDefault();
+        
+        const selectedLanguage = this.value;
+        const currentLevel = levelSelect.value;
+        
+        // Clear current options except the first one
+        while (levelSelect.options.length > 1) {
+          levelSelect.remove(1);
+        }
+        
+        // Get languages from PHP-rendered settings
+        const languageMap = {
+          'id': 'Indonesia',
+          'en': 'Inggris',
+          'ru': 'Rusia'
+        };
+        
+        // Add levels for the selected language
+        const filteredSettings = teacherSettings.filter(setting => 
+          languageMap[selectedLanguage] === setting.language);
+        
+        filteredSettings.forEach(setting => {
+          const option = document.createElement('option');
+          option.value = setting.level;
+          option.textContent = `Level ${setting.level} (${setting.level_name})`;
+          levelSelect.appendChild(option);
+        });
+        
+        // Submit the form after updating options
+        this.form.submit();
+      });
+      @endif
+      
       // Add CSRF meta tag if it doesn't exist
       if (!document.querySelector('meta[name="csrf-token"]')) {
         const meta = document.createElement('meta');
@@ -296,8 +417,9 @@
             <div class="mb-3">
               <label for="language" class="form-label">Bahasa</label>
               <select class="form-select" id="language" name="language">
-                <option value="id" {{ request('language') == 'id' || !request('language') ? 'selected' : '' }}>Bahasa Indonesia</option>
-                <option value="en" {{ request('language') == 'en' ? 'selected' : '' }}>English</option>
+                @foreach($availableLanguages as $lang)
+                <option value="{{ $lang['code'] }}" {{ $language == $lang['code'] ? 'selected' : '' }}>{{ $lang['name'] }}</option>
+                @endforeach
               </select>
             </div>
             

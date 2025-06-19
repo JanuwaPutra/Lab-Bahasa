@@ -137,6 +137,20 @@
               <span>Manajemen Role</span>
             </a>
           </li>
+          
+          <li class="nav-item {{ request()->routeIs('admin.teacher-language.*') ? 'active' : '' }}">
+            <a href="{{ route('admin.teacher-language.settings') }}" class="nav-link d-flex align-items-center">
+              <i class="fas fa-chalkboard-teacher me-2"></i>
+              <span>Pengaturan Guru & Bahasa</span>
+            </a>
+          </li>
+          
+          <li class="nav-item {{ request()->routeIs('admin.post-test.*') ? 'active' : '' }}">
+            <a href="{{ route('admin.post-test.monitoring') }}" class="nav-link d-flex align-items-center">
+              <i class="fas fa-desktop me-2"></i>
+              <span>Monitoring Post-Test</span>
+            </a>
+          </li>
           @elseif(auth()->check() && auth()->user()->role === 'teacher')
           <!-- Menu untuk teacher -->
           <li class="sidebar-header">Manajemen</li>

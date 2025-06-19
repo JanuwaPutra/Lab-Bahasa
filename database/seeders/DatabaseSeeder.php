@@ -23,14 +23,42 @@ class DatabaseSeeder extends Seeder
             'password' => bcrypt('password'), // Set a known password for easy login
         ]);
 
-        // Create a teacher user
-        User::factory()->create([
-            'name' => 'Teacher User',
-            'email' => 'teacher@example.com',
-            'role' => 'teacher',
-            'password' => bcrypt('password'), // Set a known password for easy login
+        // Create a test teacher
+        $teacher = \App\Models\User::updateOrCreate(
+            ['email' => 'teacher@example.com'],
+            [
+                'name' => 'Test Teacher',
+                'password' => bcrypt('password'),
+                'role' => 'teacher'
+            ]
+        );
+        
+        echo "Teacher created with ID: " . $teacher->id . "\n";
+        
+        // Clear existing teacher language settings
+        \Illuminate\Support\Facades\DB::table('teacher_languages')->where('teacher_id', $teacher->id)->delete();
+        
+        // Add language settings for the teacher
+        \App\Models\TeacherLanguage::create([
+            'teacher_id' => $teacher->id,
+            'language' => 'id',
+            'level' => 1,
         ]);
         
+        \App\Models\TeacherLanguage::create([
+            'teacher_id' => $teacher->id,
+            'language' => 'en',
+            'level' => 2,
+        ]);
+        
+        \App\Models\TeacherLanguage::create([
+            'teacher_id' => $teacher->id,
+            'language' => 'ru',
+            'level' => 3,
+        ]);
+        
+        echo "Teacher language settings created.\n";
+
         // Create a student user
         User::factory()->create([
             'name' => 'Student User',
@@ -40,9 +68,12 @@ class DatabaseSeeder extends Seeder
         ]);
         
         $this->call([
+            TestUserWithPretestSeeder::class,
+            TeacherUserSeeder::class,
             LearningMaterialSeeder::class,
-            AssessmentSeeder::class,
             TestSettingsSeeder::class,
+            QuestionSeeder::class,
+            AssessmentSeeder::class,
         ]);
     }
 }
