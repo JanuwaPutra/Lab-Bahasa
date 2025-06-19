@@ -131,6 +131,21 @@ class AdminController extends Controller
         return redirect()->route('admin.teacher-language.settings')
             ->with('success', 'Pengaturan bahasa guru berhasil diperbarui.');
     }
+    
+    /**
+     * Delete a teacher language setting.
+     *
+     * @param  int  $id
+     * @return \Illuminate\Http\RedirectResponse
+     */
+    public function deleteTeacherLanguageSetting($id)
+    {
+        $setting = TeacherLanguage::findOrFail($id);
+        $setting->delete();
+        
+        return redirect()->route('admin.teacher-language.settings')
+            ->with('success', 'Pengaturan bahasa guru berhasil dihapus.');
+    }
 
     /**
      * Display post-test monitoring page.

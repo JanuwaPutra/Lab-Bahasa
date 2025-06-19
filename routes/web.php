@@ -172,6 +172,7 @@ Route::prefix('admin')->middleware(['auth'])->group(function () {
     // Teacher and language settings
     Route::get('/teacher-language-settings', [AdminController::class, 'teacherLanguageSettings'])->name('admin.teacher-language.settings');
     Route::post('/teacher-language-settings', [AdminController::class, 'updateTeacherLanguageSettings'])->name('admin.teacher-language.update');
+    Route::delete('/teacher-language-settings/{id}', [AdminController::class, 'deleteTeacherLanguageSetting'])->name('admin.teacher-language.delete');
     
     // Post-test monitoring page
     Route::get('/post-test-monitoring', [AdminController::class, 'postTestMonitoring'])->name('admin.post-test.monitoring');

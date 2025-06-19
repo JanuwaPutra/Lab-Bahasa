@@ -84,6 +84,7 @@
                                                     <th>Guru</th>
                                                     <th>Bahasa</th>
                                                     <th>Level</th>
+                                                    <th>Aksi</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -95,6 +96,11 @@
                                                             <span class="badge rounded-pill bg-primary">
                                                                 {{ $setting->level }} - {{ $levels[$setting->level] ?? 'Unknown' }}
                                                             </span>
+                                                        </td>
+                                                        <td>
+                                                            <button type="button" class="btn btn-sm btn-danger delete-setting" data-id="{{ $setting->id }}" data-teacher="{{ $setting->teacher->name }}" data-language="{{ $languages[$setting->language] ?? $setting->language }}">
+                                                                <i class="fas fa-trash"></i> Hapus
+                                                            </button>
                                                         </td>
                                                     </tr>
                                                 @endforeach
@@ -153,6 +159,70 @@
                         levelSelect.value = '';
                     }
                 }
+            });
+        });
+    </script>
+    @endpush
+    
+    <!-- Delete Form (Hidden) -->
+    <form id="delete-form" method="POST" style="display: none;">
+        @csrf
+        @method('DELETE')
+    </form>
+    
+    <!-- Delete Confirmation Modal -->
+    <div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-labelledby="confirmDeleteModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="confirmDeleteModalLabel">Konfirmasi Hapus</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Apakah Anda yakin ingin menghapus pengaturan bahasa ini?</p>
+                    <p>Guru: <strong id="delete-teacher-name"></strong></p>
+                    <p>Bahasa: <strong id="delete-language-name"></strong></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+                    <button type="button" class="btn btn-danger" id="confirm-delete-btn">Hapus</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    @push('scripts')
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Delete setting handlers
+            const deleteButtons = document.querySelectorAll('.delete-setting');
+            const deleteForm = document.getElementById('delete-form');
+            const confirmDeleteModal = new bootstrap.Modal(document.getElementById('confirmDeleteModal'));
+            const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+            let deleteId = null;
+            
+            deleteButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    deleteId = this.getAttribute('data-id');
+                    const teacherName = this.getAttribute('data-teacher');
+                    const languageName = this.getAttribute('data-language');
+                    
+                    // Set modal content
+                    document.getElementById('delete-teacher-name').textContent = teacherName;
+                    document.getElementById('delete-language-name').textContent = languageName;
+                    
+                    // Show modal
+                    confirmDeleteModal.show();
+                });
+            });
+            
+            // Handle confirm delete
+            confirmDeleteBtn.addEventListener('click', function() {
+                if (deleteId) {
+                    deleteForm.action = "{{ route('admin.teacher-language.settings') }}/" + deleteId;
+                    deleteForm.submit();
+                }
+                confirmDeleteModal.hide();
             });
         });
     </script>

@@ -130,7 +130,7 @@ class LearningController extends Controller
             $quizQuestions = $quiz->formatQuestionsForDisplay();
         }
         
-        if ($quiz->time_limit) {
+        if ($quiz && $quiz->time_limit) {
             session(['quiz_start_time_' . $quiz->id => now()]);
         }
         
