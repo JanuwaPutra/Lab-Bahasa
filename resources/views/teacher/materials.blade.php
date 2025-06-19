@@ -41,6 +41,35 @@
     </div>
     @endif
     
+    <!-- Debug Information
+    <div class="row mb-4">
+      <div class="col-md-12">
+        <div class="card border-danger">
+          <div class="card-header bg-danger text-white">
+            <h5 class="mb-0">Debug Information</h5>
+          </div>
+          <div class="card-body">
+            <h6>Teacher Language Settings (Count: {{ count($teacherLanguageSettings ?? []) }}):</h6>
+            <pre>{{ json_encode($teacherLanguageSettings ?? [], JSON_PRETTY_PRINT) }}</pre>
+            
+            <h6>Auth User:</h6>
+            <pre>{{ Auth::check() ? json_encode(Auth::user()->only(['id', 'name', 'email', 'role']), JSON_PRETTY_PRINT) : 'Not logged in' }}</pre>
+            
+            <h6>Direct DB Check:</h6>
+            @php
+            $directDbCheck = DB::table('teacher_languages')->where('teacher_id', Auth::id())->get();
+            @endphp
+            <p>Count: {{ $directDbCheck->count() }}</p>
+            <ul>
+            @foreach($directDbCheck as $record)
+                <li>Teacher ID: {{ $record->teacher_id }}, Language: {{ $record->language }}, Level: {{ $record->level }}</li>
+            @endforeach
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div> -->
+    
     <div class="row mb-4">
       <div class="col-md-12">
         <div class="d-flex justify-content-between align-items-center">
@@ -63,19 +92,51 @@
               <div class="col-md-4">
                 <label for="level" class="form-label">Level</label>
                 <select name="level" id="level" class="form-select" onchange="this.form.submit()">
-                  <option value="">Semua Level</option>
-                  <option value="1" {{ $level == 1 ? 'selected' : '' }}>Level 1 (Beginner)</option>
-                  <option value="2" {{ $level == 2 ? 'selected' : '' }}>Level 2 (Intermediate)</option>
-                  <option value="3" {{ $level == 3 ? 'selected' : '' }}>Level 3 (Advanced)</option>
+     
+                  @if(isset($teacherLanguageSettings) && is_countable($teacherLanguageSettings) && count($teacherLanguageSettings) > 0)
+                    @php
+                      // Get unique levels from teacher settings
+                      $uniqueLevels = [];
+                      foreach($teacherLanguageSettings as $setting) {
+                          $uniqueLevels[$setting['level']] = $setting['level_name'];
+                      }
+                    @endphp
+                    
+                    @foreach($uniqueLevels as $levelValue => $levelName)
+                      <option value="{{ $levelValue }}" {{ $level == $levelValue ? 'selected' : '' }}>
+                        Level {{ $levelValue }} ({{ $levelName }})
+                      </option>
+                    @endforeach
+                  @else
+                    <option value="1" {{ $level == 1 ? 'selected' : '' }}>Level 1 (Beginner)</option>
+                    <option value="2" {{ $level == 2 ? 'selected' : '' }}>Level 2 (Intermediate)</option>
+                    <option value="3" {{ $level == 3 ? 'selected' : '' }}>Level 3 (Advanced)</option>
+                  @endif
                 </select>
               </div>
               
               <div class="col-md-4">
                 <label for="language" class="form-label">Bahasa</label>
                 <select name="language" id="language" class="form-select" onchange="this.form.submit()">
-                  <option value="id" {{ $language == 'id' ? 'selected' : '' }}>Indonesia</option>
-                  <option value="en" {{ $language == 'en' ? 'selected' : '' }}>English</option>
-                  <option value="ru" {{ $language == 'ru' ? 'selected' : '' }}>Russian</option>
+                  @if(isset($teacherLanguageSettings) && is_countable($teacherLanguageSettings) && count($teacherLanguageSettings) > 0)
+                    @php
+                      // Get unique languages from teacher settings
+                      $uniqueLanguages = [];
+                      foreach($teacherLanguageSettings as $setting) {
+                          $uniqueLanguages[$setting['language_code']] = $setting['language'];
+                      }
+                    @endphp
+                    
+                    @foreach($uniqueLanguages as $langCode => $langName)
+                      <option value="{{ $langCode }}" {{ $language == $langCode ? 'selected' : '' }}>
+                        {{ $langName }}
+                      </option>
+                    @endforeach
+                  @else
+                    <option value="id" {{ $language == 'id' ? 'selected' : '' }}>Indonesia</option>
+                    <option value="en" {{ $language == 'en' ? 'selected' : '' }}>English</option>
+                    <option value="ru" {{ $language == 'ru' ? 'selected' : '' }}>Russian</option>
+                  @endif
                 </select>
               </div>
               
@@ -203,4 +264,76 @@
       </div>
     </div>
   </div>
-</x-app-layout> 
+</x-app-layout>
+
+@push('scripts')
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    // Get DOM elements
+    const levelSelect = document.getElementById('level');
+    const languageSelect = document.getElementById('language');
+    
+    // Get teacher language settings from the server
+    const teacherLanguageSettings = @json($teacherLanguageSettings ?? []);
+    console.log('Teacher language settings:', teacherLanguageSettings);
+    
+    // Only apply filtering if we have settings and user is a teacher
+    if (teacherLanguageSettings.length > 0 && "{{ Auth::user()->role }}" === 'teacher') {
+      console.log('Applying dropdown filters for teacher');
+      
+      // Clear all existing options in level select except the first placeholder
+      while (levelSelect.options.length > 1) {
+        levelSelect.remove(1);
+      }
+      
+      // Clear all existing options in language select
+      while (languageSelect.options.length > 0) {
+        languageSelect.remove(0);
+      }
+      
+      // Add "All Levels" option
+      const allLevelsOption = document.createElement('option');
+      allLevelsOption.value = "";
+      allLevelsOption.textContent = "Semua Level";
+      if ("{{ $level }}" === "") {
+        allLevelsOption.selected = true;
+      }
+      levelSelect.appendChild(allLevelsOption);
+      
+      // Get unique levels from teacher settings
+      const uniqueLevels = {};
+      teacherLanguageSettings.forEach(setting => {
+        uniqueLevels[setting.level] = setting.level_name;
+      });
+      
+      // Add filtered level options
+      Object.keys(uniqueLevels).forEach(level => {
+        const option = document.createElement('option');
+        option.value = level;
+        option.textContent = `Level ${level} (${uniqueLevels[level]})`;
+        if (level === "{{ $level }}") {
+          option.selected = true;
+        }
+        levelSelect.appendChild(option);
+      });
+      
+      // Get unique languages from teacher settings
+      const uniqueLanguages = {};
+      teacherLanguageSettings.forEach(setting => {
+        uniqueLanguages[setting.language_code] = setting.language;
+      });
+      
+      // Add filtered language options
+      Object.keys(uniqueLanguages).forEach(code => {
+        const option = document.createElement('option');
+        option.value = code;
+        option.textContent = uniqueLanguages[code];
+        if (code === "{{ $language }}") {
+          option.selected = true;
+        }
+        languageSelect.appendChild(option);
+      });
+    }
+  });
+</script>
+@endpush 

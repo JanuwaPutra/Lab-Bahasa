@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\LearningMaterial;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class TeacherMaterialController extends Controller
 {
@@ -40,17 +41,60 @@ class TeacherMaterialController extends Controller
         $level = $request->input('level');
         $language = $request->input('language', 'id');
         $search = $request->input('search');
+        $teacher = auth()->user();
         
         $query = LearningMaterial::query();
         
+        // Initialize teacherLanguageSettings
+        $teacherLanguageSettings = [];
+        $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
+        $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+        
+        // If user is a teacher (not admin), filter materials by teacher's assigned language levels
+        if ($teacher->role === 'teacher') {
+            // Use direct DB query to avoid model issues
+            $teacherLanguages = DB::table('teacher_languages')->where('teacher_id', $teacher->id)->get();
+            
+            if ($teacherLanguages->count() > 0) {
+                $query->where(function($q) use ($teacherLanguages) {
+                    foreach ($teacherLanguages as $setting) {
+                        $q->orWhere(function($levelQuery) use ($setting) {
+                            $levelQuery->where('language', $setting->language)
+                                      ->where('level', $setting->level);
+                        });
+                    }
+                });
+            }
+            
+            // Get teacher's language settings for display
+            foreach ($teacherLanguages as $setting) {
+                $teacherLanguageSettings[] = [
+                    'language_code' => $setting->language,
+                    'language' => $languages[$setting->language] ?? $setting->language,
+                    'level' => $setting->level,
+                    'level_name' => $levels[$setting->level] ?? 'Unknown'
+                ];
+            }
+            
+            // Debug output
+            \Log::debug('Teacher Language Settings in TeacherMaterialController@index:', [
+                'teacher_id' => $teacher->id,
+                'count' => count($teacherLanguageSettings),
+                'settings' => $teacherLanguageSettings
+            ]);
+        }
+        
+        // Filter by level if provided
         if ($level) {
             $query->where('level', $level);
         }
         
+        // Filter by language
         if ($language) {
             $query->where('language', $language);
         }
         
+        // Search functionality
         if ($search) {
             $query->where(function($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
@@ -62,7 +106,7 @@ class TeacherMaterialController extends Controller
             ->orderBy('order')
             ->paginate(10);
         
-        return view('teacher.materials', compact('materials', 'level', 'language'));
+        return view('teacher.materials', compact('materials', 'level', 'language', 'teacherLanguageSettings'));
     }
 
     /**
@@ -74,7 +118,26 @@ class TeacherMaterialController extends Controller
     {
         $this->checkAuthorization();
         
-        return view('teacher.materials_create');
+        $teacher = auth()->user();
+        
+        // Get teacher's language settings
+        $teacherLanguageSettings = [];
+        $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
+        $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+        
+        // Use direct DB query to avoid model issues
+        $teacherLanguages = DB::table('teacher_languages')->where('teacher_id', $teacher->id)->get();
+        
+        foreach ($teacherLanguages as $setting) {
+            $teacherLanguageSettings[] = [
+                'language_code' => $setting->language,
+                'language' => $languages[$setting->language] ?? $setting->language,
+                'level' => $setting->level,
+                'level_name' => $levels[$setting->level] ?? 'Unknown'
+            ];
+        }
+        
+        return view('teacher.materials_create', compact('teacherLanguageSettings'));
     }
 
     /**
@@ -138,8 +201,26 @@ class TeacherMaterialController extends Controller
         $this->checkAuthorization();
         
         $material = LearningMaterial::findOrFail($id);
+        $teacher = auth()->user();
         
-        return view('teacher.materials_edit', compact('material'));
+        // Get teacher's language settings
+        $teacherLanguageSettings = [];
+        $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
+        $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+        
+        // Use direct DB query to avoid model issues
+        $teacherLanguages = DB::table('teacher_languages')->where('teacher_id', $teacher->id)->get();
+        
+        foreach ($teacherLanguages as $setting) {
+            $teacherLanguageSettings[] = [
+                'language_code' => $setting->language,
+                'language' => $languages[$setting->language] ?? $setting->language,
+                'level' => $setting->level,
+                'level_name' => $levels[$setting->level] ?? 'Unknown'
+            ];
+        }
+        
+        return view('teacher.materials_edit', compact('material', 'teacherLanguageSettings'));
     }
 
     /**

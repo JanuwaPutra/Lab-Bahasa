@@ -256,7 +256,8 @@ class TeacherController extends Controller
         
         // If user is a teacher (not admin), filter materials by teacher's assigned language levels
         if ($teacher->role === 'teacher') {
-            $teacherLanguages = TeacherLanguage::where('teacher_id', $teacher->id)->get();
+            // Use direct DB query to avoid model issues
+            $teacherLanguages = \DB::table('teacher_languages')->where('teacher_id', $teacher->id)->get();
             
             if ($teacherLanguages->count() > 0) {
                 $query->where(function($q) use ($teacherLanguages) {
@@ -270,19 +271,24 @@ class TeacherController extends Controller
             }
             
             // Get teacher's language settings for display
-            $teacherLanguageSettings = TeacherLanguage::where('teacher_id', $teacher->id)
-                ->get()
-                ->map(function($setting) {
-                    $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
-                    $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
-                    
-                    return [
-                        'language_code' => $setting->language,
-                        'language' => $languages[$setting->language] ?? $setting->language,
-                        'level' => $setting->level,
-                        'level_name' => $levels[$setting->level] ?? 'Unknown'
-                    ];
-                });
+            $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
+            $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
+            
+            foreach ($teacherLanguages as $setting) {
+                $teacherLanguageSettings[] = [
+                    'language_code' => $setting->language,
+                    'language' => $languages[$setting->language] ?? $setting->language,
+                    'level' => $setting->level,
+                    'level_name' => $levels[$setting->level] ?? 'Unknown'
+                ];
+            }
+            
+            // Debug output
+            \Log::debug('Teacher Language Settings in materials method:', [
+                'teacher_id' => $teacher->id, 
+                'count' => count($teacherLanguageSettings),
+                'settings' => $teacherLanguageSettings
+            ]);
         }
         
         // Filter by level if provided
@@ -335,38 +341,17 @@ class TeacherController extends Controller
                 'languages' => $teacherLanguages->toArray()
             ]);
             
-            // CRITICAL FIX: Force load the teacher language settings from DB
-            if ($teacherLanguages->isEmpty()) {
-                // If we can't find any settings, check if there's a direct record in DB
-                $directDbCheck = \DB::select("SELECT * FROM teacher_languages WHERE teacher_id = ?", [$teacher->id]);
-                if (!empty($directDbCheck)) {
-                    foreach ($directDbCheck as $setting) {
-                        $teacherLanguageSettings[] = [
-                            'language_code' => $setting->language,
-                            'language' => $languages[$setting->language] ?? $setting->language,
-                            'level' => $setting->level,
-                            'level_name' => $levels[$setting->level] ?? 'Unknown'
-                        ];
-                    }
-                    \Log::debug('Teacher Languages from direct SQL:', [
-                        'teacher_id' => $teacher->id,
-                        'count' => count($directDbCheck),
-                        'languages' => $directDbCheck
-                    ]);
-                }
-            } else {
-                // Only use the teacher's actual language settings
-                foreach ($teacherLanguages as $setting) {
-                    $teacherLanguageSettings[] = [
-                        'language_code' => $setting->language,
-                        'language' => $languages[$setting->language] ?? $setting->language,
-                        'level' => $setting->level,
-                        'level_name' => $levels[$setting->level] ?? 'Unknown'
-                    ];
-                }
+            // Only use the teacher's actual language settings
+            foreach ($teacherLanguages as $setting) {
+                $teacherLanguageSettings[] = [
+                    'language_code' => $setting->language,
+                    'language' => $languages[$setting->language] ?? $setting->language,
+                    'level' => $setting->level,
+                    'level_name' => $levels[$setting->level] ?? 'Unknown'
+                ];
             }
             
-            // If still no settings found, add at least one default option
+            // If no settings found, add at least one default option
             if (empty($teacherLanguageSettings)) {
                 $teacherLanguageSettings[] = [
                     'language_code' => 'id',
@@ -524,38 +509,17 @@ class TeacherController extends Controller
                 'languages' => $teacherLanguages->toArray()
             ]);
             
-            // CRITICAL FIX: Force load the teacher language settings from DB
-            if ($teacherLanguages->isEmpty()) {
-                // If we can't find any settings, check if there's a direct record in DB
-                $directDbCheck = \DB::select("SELECT * FROM teacher_languages WHERE teacher_id = ?", [$teacher->id]);
-                if (!empty($directDbCheck)) {
-                    foreach ($directDbCheck as $setting) {
-                        $teacherLanguageSettings[] = [
-                            'language_code' => $setting->language,
-                            'language' => $languages[$setting->language] ?? $setting->language,
-                            'level' => $setting->level,
-                            'level_name' => $levels[$setting->level] ?? 'Unknown'
-                        ];
-                    }
-                    \Log::debug('Teacher Languages from direct SQL (Edit Material):', [
-                        'teacher_id' => $teacher->id,
-                        'count' => count($directDbCheck),
-                        'languages' => $directDbCheck
-                    ]);
-                }
-            } else {
-                // Only use the teacher's actual language settings
-                foreach ($teacherLanguages as $setting) {
-                    $teacherLanguageSettings[] = [
-                        'language_code' => $setting->language,
-                        'language' => $languages[$setting->language] ?? $setting->language,
-                        'level' => $setting->level,
-                        'level_name' => $levels[$setting->level] ?? 'Unknown'
-                    ];
-                }
+            // Only use the teacher's actual language settings
+            foreach ($teacherLanguages as $setting) {
+                $teacherLanguageSettings[] = [
+                    'language_code' => $setting->language,
+                    'language' => $languages[$setting->language] ?? $setting->language,
+                    'level' => $setting->level,
+                    'level_name' => $levels[$setting->level] ?? 'Unknown'
+                ];
             }
             
-            // If still no settings found, add at least one default option
+            // If no settings found, add at least one default option
             if (empty($teacherLanguageSettings)) {
                 $teacherLanguageSettings[] = [
                     'language_code' => 'id',

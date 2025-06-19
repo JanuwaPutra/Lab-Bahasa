@@ -76,8 +76,9 @@
           <div class="card-body">
             <div class="table-responsive">
               <table class="table table-hover table-bordered" id="studentsTable">
-                <thead class="table-light">
+                <thead>
                   <tr>
+                    <th>No</th>
                     <th>Nama Siswa</th>
                     <th>Email</th>
                     <th>Bahasa</th>
@@ -88,7 +89,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  @forelse($students as $student)
+                  @forelse($students as $index => $student)
                   @php
                     $latestAssessment = \App\Models\Assessment::where('user_id', $student->id)
                       ->whereIn('type', ['pretest', 'post_test', 'placement', 'level_change'])
@@ -105,6 +106,7 @@
                     $levelName = isset($levels[$studentLevel]) ? $levels[$studentLevel] : '-';
                   @endphp
                   <tr>
+                    <td>{{ $index + 1 }}</td>
                     <td>{{ $student->name }}</td>
                     <td>{{ $student->email }}</td>
                     <td>{{ $languageName }}</td>
@@ -152,7 +154,7 @@
                   </tr>
                   @empty
                   <tr>
-                    <td colspan="7" class="text-center">Tidak ada data siswa.</td>
+                    <td colspan="8" class="text-center">Tidak ada data siswa.</td>
                   </tr>
                   @endforelse
                 </tbody>
@@ -171,29 +173,50 @@
   <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
   <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
   <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      // Initialize DataTable if jQuery and DataTable are available
-      if (typeof jQuery !== 'undefined' && typeof jQuery.fn.DataTable !== 'undefined') {
-        jQuery('#studentsTable').DataTable({
-          "language": {
-            "search": "Cari:",
-            "lengthMenu": "Tampilkan _MENU_ data per halaman",
-            "zeroRecords": "Tidak ada data yang ditemukan",
-            "info": "Menampilkan halaman _PAGE_ dari _PAGES_",
-            "infoEmpty": "Tidak ada data yang tersedia",
-            "infoFiltered": "(difilter dari _MAX_ total data)",
-            "paginate": {
-              "first": "Pertama",
-              "last": "Terakhir",
-              "next": "Selanjutnya",
-              "previous": "Sebelumnya"
-            }
-          },
-          "pageLength": 10,
-          "responsive": true
-        });
-      } else {
-        console.log('DataTable or jQuery not available');
+    $(document).ready(function() {
+      try {
+        // Check if the table exists
+        if ($('#studentsTable').length > 0) {
+          // Suppress DataTables warnings by overriding the warning function
+          $.fn.dataTable.ext.errMode = 'none';
+          
+          // Initialize DataTable with more careful options
+          var table = $('#studentsTable').DataTable({
+            "language": {
+              "search": "Cari:",
+              "lengthMenu": "Tampilkan _MENU_ data per halaman",
+              "zeroRecords": "Tidak ada data yang ditemukan",
+              "info": "Menampilkan halaman _PAGE_ dari _PAGES_",
+              "infoEmpty": "Tidak ada data yang tersedia",
+              "infoFiltered": "(difilter dari _MAX_ total data)",
+              "paginate": {
+                "first": "Pertama",
+                "last": "Terakhir",
+                "next": "Selanjutnya",
+                "previous": "Sebelumnya"
+              }
+            },
+            "pageLength": 10,
+            "responsive": true,
+            "ordering": true,
+            "processing": true,
+            "columnDefs": [
+              { "orderable": false, "targets": [7] } // Disable sorting on action column
+            ]
+          });
+          
+          // Suppress specific warnings by handling the error event
+          table.on('error.dt', function(e, settings, techNote, message) {
+            console.log('DataTables error occurred but suppressed:', message);
+            return true; // Suppress error message
+          });
+          
+          console.log('DataTable initialized successfully');
+        } else {
+          console.log('Table #studentsTable not found');
+        }
+      } catch (error) {
+        console.error('Error initializing DataTable:', error);
       }
     });
   </script>

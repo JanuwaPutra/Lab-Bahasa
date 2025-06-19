@@ -27,29 +27,7 @@
             
             <h6>Direct DB Check:</h6>
             @php
-            $languages = ['id' => 'Indonesia', 'en' => 'Inggris', 'ru' => 'Rusia'];
-            $levels = [1 => 'Beginner', 2 => 'Intermediate', 3 => 'Advanced'];
-            
-            // Try different ways to get teacher languages
             $directDbCheck = DB::table('teacher_languages')->where('teacher_id', Auth::id())->get();
-            
-            // If empty, try direct SQL
-            if ($directDbCheck->isEmpty()) {
-                $directDbCheck = DB::select("SELECT * FROM teacher_languages WHERE teacher_id = ?", [Auth::id()]);
-            }
-            
-            // Force teacherLanguageSettings to be populated if we have data in DB
-            if (empty($teacherLanguageSettings) && !empty($directDbCheck)) {
-                $teacherLanguageSettings = [];
-                foreach ($directDbCheck as $setting) {
-                    $teacherLanguageSettings[] = [
-                        'language_code' => $setting->language ?? $setting->language_code ?? 'id',
-                        'language' => $languages[$setting->language ?? 'id'] ?? 'Indonesia',
-                        'level' => $setting->level ?? 1,
-                        'level_name' => $levels[$setting->level ?? 1] ?? 'Beginner'
-                    ];
-                }
-            }
             @endphp
             <p>Count: {{ $directDbCheck->count() }}</p>
             <ul>
@@ -287,33 +265,56 @@
         console.log(`Language option ${i}:`, languageSelect.options[i].value, languageSelect.options[i].text);
       }
       
-      // Get the teacher's language settings from the debug card
+      // Get the teacher's language settings from the server
       const teacherLanguageSettings = @json($teacherLanguageSettings ?? []);
       console.log('Teacher language settings from server:', teacherLanguageSettings);
       
-      // Filter level options to only show those in teacher settings
+      // Only apply filtering if we have settings
       if (teacherLanguageSettings.length > 0) {
-        const allowedLevels = teacherLanguageSettings.map(setting => setting.level.toString());
-        console.log('Allowed levels:', allowedLevels);
+        // Clear all existing options in level select except the first placeholder
+        while (levelSelect.options.length > 1) {
+          levelSelect.remove(1);
+        }
         
-        // Keep only the first option (placeholder) and the allowed levels
-        Array.from(levelSelect.options).forEach((option, index) => {
-          if (index > 0 && !allowedLevels.includes(option.value)) {
-            option.remove();
-          }
+        // Clear all existing options in language select except the first placeholder
+        while (languageSelect.options.length > 1) {
+          languageSelect.remove(1);
+        }
+        
+        // Get unique levels from teacher settings
+        const uniqueLevels = {};
+        teacherLanguageSettings.forEach(setting => {
+          uniqueLevels[setting.level] = setting.level_name;
         });
-      }
-      
-      // Filter language options to only show those in teacher settings
-      if (teacherLanguageSettings.length > 0) {
-        const allowedLanguages = teacherLanguageSettings.map(setting => setting.language_code);
-        console.log('Allowed languages:', allowedLanguages);
         
-        // Keep only the first option (placeholder) and the allowed languages
-        Array.from(languageSelect.options).forEach((option, index) => {
-          if (index > 0 && !allowedLanguages.includes(option.value)) {
-            option.remove();
+        // Add filtered level options
+        Object.keys(uniqueLevels).forEach(level => {
+          const option = document.createElement('option');
+          option.value = level;
+          option.textContent = `Level ${level} (${uniqueLevels[level]})`;
+          // Select the current material's level
+          if (level == {{ $material->level }}) {
+            option.selected = true;
           }
+          levelSelect.appendChild(option);
+        });
+        
+        // Get unique languages from teacher settings
+        const uniqueLanguages = {};
+        teacherLanguageSettings.forEach(setting => {
+          uniqueLanguages[setting.language_code] = setting.language;
+        });
+        
+        // Add filtered language options
+        Object.keys(uniqueLanguages).forEach(code => {
+          const option = document.createElement('option');
+          option.value = code;
+          option.textContent = uniqueLanguages[code];
+          // Select the current material's language
+          if (code === "{{ $material->language }}") {
+            option.selected = true;
+          }
+          languageSelect.appendChild(option);
         });
       }
       
