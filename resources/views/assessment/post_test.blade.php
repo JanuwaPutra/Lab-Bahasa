@@ -548,7 +548,8 @@
           body: JSON.stringify({
             answers: {}, // Use an empty object
             language: '{{ $language ?? "id" }}',
-            force_clear: true
+            force_clear: true,
+            terminate_test: true // Add this flag to explicitly terminate the test in monitoring
           })
         })
         .then(response => {
@@ -1078,7 +1079,8 @@
             language: '{{ $language ?? "id" }}',
             completed: true,
             remaining_seconds: 0,
-            force_complete: true  // Special flag for backend
+            force_complete: true,  // Special flag for backend
+            terminate_test: true   // New flag to ensure removal from monitoring
           })
         })
         .then(response => {

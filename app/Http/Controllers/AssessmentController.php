@@ -538,70 +538,57 @@ class AssessmentController extends Controller
         $user = auth()->user();
         $currentLevel = $user->getCurrentLevel($language) ?? 1;
         
-        // IMPORTANT: Check and log all active post-test progress
-        $activeTests = \App\Models\PostTestProgress::where('is_active', true)
+        // Check for active tests (don't force create new ones)
+        $existingActiveTest = \App\Models\PostTestProgress::where('user_id', $user->id)
+            ->where('language', $language)
+            ->where('level', $currentLevel)
+            ->where('is_active', true)
             ->where('completed', false)
-            ->get();
+            ->first();
             
-        \Log::info('DIAGNOSTIC: All active post-tests in the system', [
-            'count' => $activeTests->count(),
-            'records' => $activeTests->map(function($test) {
-                return [
-                    'id' => $test->id,
-                    'user_id' => $test->user_id,
-                    'language' => $test->language,
-                    'level' => $test->level,
-                    'created_at' => $test->created_at,
-                    'updated_at' => $test->updated_at
-                ];
-            })
-        ]);
-        
-        // First ensure all previous tests are deactivated - bypass the Eloquent model
-        $deactivated = $this->safelyDeactivateActiveTests($user->id, $language, $currentLevel);
-        
-        if (!$deactivated) {
-            \Log::warning('Failed to deactivate previous tests, continuing with caution', [
-                'user_id' => $user->id,
-                'language' => $language, 
-                'level' => $currentLevel
-            ]);
-        }
-        
-        // Safety measure: Use a transaction and try-catch to handle the unique constraint issue
-        try {
-            \DB::beginTransaction();
-            
-            // Create a new progress record
-            $newProgress = \App\Models\PostTestProgress::create([
-                'user_id' => $user->id,
-                'language' => $language,
-                'level' => $currentLevel,
-                'start_time' => now(),
-                'answers' => [],
-                'completed' => false,
-                'is_active' => true
-            ]);
-            
-            \DB::commit();
-            
-            \Log::info('FORCED new post-test progress record creation on page load', [
-                'progress_id' => $newProgress->id,
+        // If there's already an active test, don't create a new one
+        if (!$existingActiveTest) {
+            try {
+                \DB::beginTransaction();
+                
+                // Create a new post-test progress record
+                $newProgress = \App\Models\PostTestProgress::create([
+                    'user_id' => $user->id,
+                    'language' => $language,
+                    'level' => $currentLevel,
+                    'start_time' => now(),
+                    'answers' => [],
+                    'completed' => false,
+                    'is_active' => true
+                ]);
+                
+                \DB::commit();
+                
+                \Log::info('FORCED new post-test progress record creation on page load', [
+                    'progress_id' => $newProgress->id,
+                    'user_id' => $user->id,
+                    'language' => $language,
+                    'level' => $currentLevel
+                ]);
+            } catch (\Exception $e) {
+                \DB::rollBack();
+                
+                \Log::error('Failed to create new post-test progress record', [
+                    'error' => $e->getMessage(),
+                    'user_id' => $user->id,
+                    'language' => $language,
+                    'level' => $currentLevel
+                ]);
+                
+                // Continue without creating a new record - we'll try to use an existing one
+            }
+        } else {
+            \Log::info('Using existing active post-test record instead of creating a new one', [
+                'progress_id' => $existingActiveTest->id,
                 'user_id' => $user->id,
                 'language' => $language,
                 'level' => $currentLevel
             ]);
-        } catch (\Exception $e) {
-            \DB::rollBack();
-            
-            \Log::error('Failed to create new post-test progress record', [
-                'error' => $e->getMessage(),
-                'user_id' => $user->id,
-                'language' => $language,
-                'level' => $currentLevel
-            ]);
-            
-            // Continue without creating a new record - we'll try to use an existing one
         }
         
         // Get language-specific questions
@@ -1375,6 +1362,7 @@ class AssessmentController extends Controller
         $timeExpired = $request->input('time_expired', false);
         $remainingSeconds = $request->input('remaining_seconds', null);
         $forceComplete = $request->input('force_complete', false);
+        $terminateTest = $request->input('terminate_test', false);
         
         // Validate language
         if (!in_array($language, ['id', 'en', 'ru'])) {
@@ -1393,10 +1381,59 @@ class AssessmentController extends Controller
             'completed' => $isCompleted,
             'time_expired' => $timeExpired,
             'remaining_seconds' => $remainingSeconds,
-            'force_complete' => $forceComplete
+            'force_complete' => $forceComplete,
+            'terminate_test' => $terminateTest
         ]);
         
         try {
+            // Special handling for terminate_test flag from retry button
+            if ($terminateTest) {
+                \Log::info('Terminate test flag detected, forcefully removing test from monitoring', [
+                    'user_id' => $user->id,
+                    'language' => $language,
+                    'level' => $level
+                ]);
+                
+                // Terminate any active tests for this user in this language and level
+                try {
+                    \DB::unprepared("
+                        UPDATE post_test_progress 
+                        SET is_active = 0, completed = 1, completed_at = NOW() 
+                        WHERE user_id = {$user->id} AND language = '{$language}' AND level = {$level}
+                    ");
+                    
+                    \Log::info('Successfully terminated all tests for user from monitoring');
+                    
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Tests terminated and removed from monitoring'
+                    ]);
+                } catch (\Exception $e) {
+                    \Log::error('Error during test termination', [
+                        'error' => $e->getMessage()
+                    ]);
+                    
+                    // Try a different approach if the update fails
+                    try {
+                        \DB::unprepared("
+                            DELETE FROM post_test_progress 
+                            WHERE user_id = {$user->id} AND language = '{$language}' AND level = {$level}
+                        ");
+                        
+                        \Log::info('Directly deleted all tests for user from monitoring');
+                        
+                        return response()->json([
+                            'success' => true,
+                            'message' => 'Tests forcefully deleted from monitoring'
+                        ]);
+                    } catch (\Exception $e2) {
+                        \Log::error('Error during force delete from monitoring', [
+                            'error' => $e2->getMessage()
+                        ]);
+                    }
+                }
+            }
+            
             // Handle force complete flag (from client-side) with ultra-direct SQL
             if ($forceComplete) {
                 \Log::info('Force complete flag detected, forcefully marking all active tests as completed', [

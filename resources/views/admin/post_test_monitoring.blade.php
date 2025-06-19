@@ -61,9 +61,10 @@
                                                 <button id="refresh-btn" class="btn btn-sm btn-primary">
                                                     <i class="fas fa-sync-alt me-2"></i> Refresh
                                                 </button>
+                                                <!-- Add back the auto-refresh toggle -->
                                                 <div class="form-check form-switch mt-2">
                                                     <input class="form-check-input" type="checkbox" id="auto-refresh" checked>
-                                                    <label class="form-check-label" for="auto-refresh">Auto-refresh (3s)</label>
+                                                    <label class="form-check-label" for="auto-refresh">Auto-refresh (10s)</label>
                                                 </div>
                                             </div>
                                         </div>
@@ -128,11 +129,74 @@
             
             // Variables
             let refreshInterval;
-            const REFRESH_INTERVAL = 3000; // 3 seconds - more frequent updates
+            const REFRESH_INTERVAL = 10000; // 10 seconds between auto-refresh
+            let activeTests = []; // Store active tests data
+            let countdownIntervals = {}; // Store intervals for each test
             
             // Functions
             function formatTime(timeString) {
                 return timeString;
+            }
+            
+            // Parse time string (MM:SS) to seconds
+            function parseTimeToSeconds(timeString) {
+                const [minutes, seconds] = timeString.split(':').map(Number);
+                return minutes * 60 + seconds;
+            }
+            
+            // Convert seconds to MM:SS format
+            function formatSecondsToTime(seconds) {
+                if (seconds <= 0) return '00:00';
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
+            }
+            
+            // Update countdown timers for all active tests - DISABLED real-time countdown
+            function updateCountdowns() {
+                // Stop all existing countdown intervals
+                Object.keys(countdownIntervals).forEach(key => {
+                    clearInterval(countdownIntervals[key]);
+                    delete countdownIntervals[key];
+                });
+                
+                // Get all test rows but don't start countdowns
+                const testRows = document.querySelectorAll('#post-tests-table-body tr[data-student-id]');
+                
+                // We no longer set up countdown timers since we only want updates on refresh
+                // Just mark expired tests visually
+                testRows.forEach(row => {
+                    // Find remaining time cell
+                    const timeCell = row.querySelector('td:nth-child(7)');
+                    if (!timeCell) return;
+                    
+                    // Get the time display element
+                    const timeDisplay = timeCell.querySelector('.ms-2');
+                    if (!timeDisplay) return;
+                    
+                    // Get current time value
+                    let remainingTimeString = timeDisplay.textContent.trim();
+                    let remainingSeconds = parseTimeToSeconds(remainingTimeString);
+                    
+                    // Get time bar
+                    const timeBar = timeCell.querySelector('.progress-bar');
+                    
+                    // Just check if time is expired and update display accordingly
+                    if (remainingSeconds <= 0) {
+                        timeDisplay.textContent = '00:00';
+                        
+                        // Update time bar
+                        if (timeBar) {
+                            timeBar.style.width = '0%';
+                            timeBar.classList.remove('bg-success', 'bg-warning');
+                            timeBar.classList.add('bg-danger');
+                        }
+                        
+                        // Mark row as expired
+                        row.classList.add('table-secondary');
+                        row.style.opacity = '0.7';
+                    }
+                });
             }
             
             function fetchData() {
@@ -187,8 +251,8 @@
                     const now = new Date();
                     lastUpdatedEl.textContent = now.toLocaleTimeString();
                     
-                    // Get active tests
-                    const activeTests = data.active_tests || [];
+                    // Store active tests for countdown timers
+                    activeTests = data.active_tests || [];
                     
                     // Update active count
                     activeCountEl.textContent = activeTests.length;
@@ -198,12 +262,12 @@
                         tableBody.innerHTML = '';
                         noTestsMessage.classList.remove('d-none');
                         
-                        // Add info text to indicate auto-refreshing
+                        // Add info text to indicate manual refresh
                         noTestsMessage.innerHTML = `
                             <i class="fas fa-exclamation-triangle me-2"></i> 
                             Tidak ada siswa yang sedang mengerjakan post-test saat ini.
                             <div class="mt-2">
-                                <small class="text-muted">Data akan otomatis diperbarui ketika ada siswa yang mulai mengerjakan post-test.</small>
+                                <small class="text-muted">Klik tombol Refresh untuk memeriksa data terbaru.</small>
                             </div>
                         `;
                     } else {
@@ -267,12 +331,12 @@
                             tableBody.innerHTML = '';
                             noTestsMessage.classList.remove('d-none');
                             
-                            // Add info text to indicate auto-refreshing
+                            // Add info text to indicate manual refresh
                             noTestsMessage.innerHTML = `
                                 <i class="fas fa-exclamation-triangle me-2"></i> 
                                 Tidak ada siswa yang sedang mengerjakan post-test saat ini.
                                 <div class="mt-2">
-                                    <small class="text-muted">Data akan otomatis diperbarui ketika ada siswa yang mulai mengerjakan post-test.</small>
+                                    <small class="text-muted">Klik tombol Refresh untuk memeriksa data terbaru.</small>
                                 </div>
                             `;
                             
@@ -280,6 +344,9 @@
                             activeCountEl.textContent = '0';
                         } else {
                             tableBody.innerHTML = tableHtml;
+                            
+                            // Initialize countdown timers
+                            updateCountdowns();
                         }
                     }
                 })
@@ -297,12 +364,20 @@
             }
             
             function startAutoRefresh() {
+                // Clear any existing interval
                 if (refreshInterval) {
                     clearInterval(refreshInterval);
+                    refreshInterval = null;
                 }
                 
+                // If auto-refresh is enabled, set up interval to call fetchData
                 if (autoRefreshToggle.checked) {
-                    refreshInterval = setInterval(fetchData, REFRESH_INTERVAL);
+                    refreshInterval = setInterval(() => {
+                        fetchData();
+                    }, REFRESH_INTERVAL);
+                    console.log('Auto-refresh enabled, interval set to', REFRESH_INTERVAL, 'ms');
+                } else {
+                    console.log('Auto-refresh disabled');
                 }
             }
             
@@ -311,6 +386,7 @@
                 fetchData();
             });
             
+            // Add event listener for auto-refresh toggle
             autoRefreshToggle.addEventListener('change', function() {
                 startAutoRefresh();
             });
@@ -348,7 +424,7 @@
             // Initial data fetch
             fetchData();
             
-            // Start auto-refresh
+            // Start auto-refresh (if enabled)
             startAutoRefresh();
         });
     </script>
