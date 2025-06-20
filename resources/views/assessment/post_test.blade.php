@@ -665,6 +665,9 @@
         
         startTimer();
         updateNavigation();
+        
+        // Initialize real-time answer tracking
+        initializeRealTimeAnswerTracking();
       }
       
       // Update navigation buttons and question counter
@@ -898,7 +901,7 @@
       });
       
       // Save answers to local storage and server
-      function saveAnswers(isCompleted = false) {
+      function saveAnswers(isCompleted = false, isRealTime = false) {
         const answers = {};
         
         questionItems.forEach(item => {
@@ -936,6 +939,13 @@
         // Save to localStorage as backup
         localStorage.setItem(`${STORAGE_PREFIX}answers`, JSON.stringify(answers));
         
+        // If offline, don't try to save to server, but mark that we need to sync later
+        if (!navigator.onLine) {
+          console.log('Offline: Answers saved locally only');
+          localStorage.setItem(`${STORAGE_PREFIX}needs_sync`, 'true');
+          return; // Exit early
+        }
+        
         // Get fresh CSRF token
         const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
         
@@ -956,7 +966,25 @@
           submittableAnswers['_completed'] = true;
         }
         
-        // Save to server untuk persistensi
+        // For real-time saves, use a different approach to avoid overwhelming the server
+        if (isRealTime) {
+          // Use a debounce mechanism to avoid too many requests
+          if (window.saveAnswersTimeout) {
+            clearTimeout(window.saveAnswersTimeout);
+          }
+          
+          window.saveAnswersTimeout = setTimeout(() => {
+            performServerSave(submittableAnswers, csrfToken, isCompleted, remainingSeconds);
+          }, 1000); // Wait 1 second before sending to server
+        } else {
+          // Immediate save for navigation or explicit saves
+          performServerSave(submittableAnswers, csrfToken, isCompleted, remainingSeconds);
+        }
+      }
+      
+      // Helper function to perform the actual server save
+      function performServerSave(submittableAnswers, csrfToken, isCompleted, remainingSeconds) {
+        // Save to server for persistence
         fetch('{{ route('post-test.save-answers') }}', {
           method: 'POST',
           headers: {
@@ -985,11 +1013,14 @@
         })
         .then(data => {
           console.log('Answers saved to server successfully');
+          // Clear the needs_sync flag since we successfully saved
+          localStorage.removeItem(`${STORAGE_PREFIX}needs_sync`);
           serverErrorCount = 0; // Reset error count on success
         })
         .catch(error => {
           handleServerError(error, 'saving answers');
-          // Don't alert the user, just keep the answers in localStorage as backup
+          // Mark that we need to sync later
+          localStorage.setItem(`${STORAGE_PREFIX}needs_sync`, 'true');
         });
       }
       
@@ -1429,6 +1460,9 @@
             }
           }
         }
+        
+        // Initialize real-time answer tracking after restoring answers
+        initializeRealTimeAnswerTracking();
       }
       
       // Add event listeners for question navigation
@@ -1483,6 +1517,140 @@
           // Let the default navigation happen
           // No need to prevent default
         });
+      }
+      
+      // Add event listeners for real-time answer saving
+      function setupRealTimeAnswerSaving() {
+        // For radio buttons (multiple choice and true/false)
+        document.querySelectorAll('input[type="radio"]').forEach(radio => {
+          radio.addEventListener('change', function() {
+            // Save answers immediately when a radio button is selected
+            saveAnswers(false, true);
+          });
+        });
+        
+        // For text inputs (fill in the blanks)
+        document.querySelectorAll('input[type="text"]').forEach(input => {
+          // Use input event with debounce for text inputs
+          let debounceTimer;
+          input.addEventListener('input', function() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+              saveAnswers(false, true);
+            }, 500); // Save after 500ms of inactivity
+          });
+        });
+        
+        // For textareas (essay questions)
+        document.querySelectorAll('textarea').forEach(textarea => {
+          // Use input event with debounce for textareas
+          let debounceTimer;
+          textarea.addEventListener('input', function() {
+            // Update word count
+            const wordCount = this.value.trim().split(/\s+/).filter(Boolean).length;
+            const wordCountElement = this.closest('.form-group').querySelector('.word-count');
+            if (wordCountElement) {
+              wordCountElement.textContent = wordCount;
+            }
+            
+            // Save after a short delay
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+              saveAnswers(false, true);
+            }, 1000); // Save after 1 second of inactivity
+          });
+        });
+      }
+      
+      // Call this function after restoring answers or starting the test
+      function initializeRealTimeAnswerTracking() {
+        setupRealTimeAnswerSaving();
+        
+        // Set up offline detection
+        window.addEventListener('online', handleOnlineStatusChange);
+        window.addEventListener('offline', handleOnlineStatusChange);
+        
+        // Check initial status
+        if (!navigator.onLine) {
+          handleOnlineStatusChange();
+        }
+      }
+      
+      // Handle online/offline status changes
+      function handleOnlineStatusChange() {
+        if (navigator.onLine) {
+          console.log('Back online - syncing saved answers');
+          
+          // Check if we need to sync
+          const needsSync = localStorage.getItem(`${STORAGE_PREFIX}needs_sync`) === 'true';
+          
+          // Try to sync any answers saved while offline
+          if (needsSync) {
+            const answers = JSON.parse(localStorage.getItem(`${STORAGE_PREFIX}answers`) || '{}');
+            if (Object.keys(answers).length > 0) {
+              // Force an immediate save (not real-time)
+              saveAnswers(false, false);
+              
+              // Show a small notification that we're syncing
+              showConnectionNotification('Koneksi terhubung kembali. Menyinkronkan jawaban...', 'success');
+            } else {
+              localStorage.removeItem(`${STORAGE_PREFIX}needs_sync`);
+              showConnectionNotification('Koneksi terhubung kembali.', 'success');
+            }
+          } else {
+            showConnectionNotification('Koneksi terhubung kembali.', 'success');
+          }
+        } else {
+          console.log('Offline - answers will be saved locally');
+          showConnectionNotification('Koneksi terputus. Jawaban Anda akan disimpan secara lokal.', 'warning');
+        }
+      }
+      
+      // Show connection status notification
+      function showConnectionNotification(message, type) {
+        // Remove any existing notification
+        const existingNotification = document.getElementById('connection-notification');
+        if (existingNotification) {
+          existingNotification.remove();
+        }
+        
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.id = 'connection-notification';
+        notification.style.position = 'fixed';
+        notification.style.bottom = '20px';
+        notification.style.right = '20px';
+        notification.style.padding = '10px 15px';
+        notification.style.borderRadius = '4px';
+        notification.style.zIndex = '9999';
+        notification.style.maxWidth = '300px';
+        notification.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+        
+        if (type === 'success') {
+          notification.style.backgroundColor = '#d1e7dd';
+          notification.style.color = '#0f5132';
+          notification.style.border = '1px solid #badbcc';
+        } else {
+          notification.style.backgroundColor = '#fff3cd';
+          notification.style.color = '#664d03';
+          notification.style.border = '1px solid #ffecb5';
+        }
+        
+        notification.innerHTML = `
+          <div style="display: flex; align-items: center;">
+            <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-triangle'} me-2"></i>
+            <span>${message}</span>
+          </div>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        // Remove notification after 5 seconds
+        setTimeout(() => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 5000);
       }
     });
   </script>
